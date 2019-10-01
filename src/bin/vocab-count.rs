@@ -17,18 +17,18 @@ fn main() {
 
     let map = hash_counts(&mut reader);
     for (word, count) in map.iter() {
-        write!(writer, "{} {}\n", word, count).unwrap();
+        writeln!(writer, "{} {}", word, count).unwrap();
     }
 }
 
-fn hash_counts(reader: &mut Box<dyn BufRead>) -> HashMap<String, i32, RandomXxHashBuilder64> {
+fn hash_counts(reader: &mut dyn BufRead) -> HashMap<String, i32, RandomXxHashBuilder64> {
     let mut map: HashMap<String, i32, RandomXxHashBuilder64> = Default::default();
     let mut line = String::new();
     while reader.read_line(&mut line).unwrap() > 0 {
         process_line(&mut map, &line);
         line.clear();
     }
-    return map;
+    map
 }
 
 fn process_line(map: &mut HashMap<String, i32, RandomXxHashBuilder64>, line: &str) {
