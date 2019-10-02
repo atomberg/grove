@@ -42,7 +42,7 @@ impl<T: Copy> CornerMatrix<T> {
             max_size,
             max_prod,
             row_offset,
-            data: vec![initial_value; last],
+            data: vec![initial_value; last + min(max_prod / max_size, max_size)],
         }
     }
 
@@ -122,7 +122,7 @@ mod tests {
     fn test_matrix_creation() {
         let matrix = CornerMatrix::<f32>::new(5, 10, 0.0);
         assert_eq!(matrix.row_offset, [0, 5, 10, 13, 15]);
-        assert_eq!(matrix.data, vec![0.0; 10]);
+        assert_eq!(matrix.data.len(), 17);
     }
 
     #[test]
