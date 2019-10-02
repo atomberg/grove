@@ -26,6 +26,7 @@ fn main() {
 
     if params.max_vocab > 0 && params.max_vocab < vocab.len() {
         vocab.sort_unstable_by_key(|(_word, count)| 1 - count);
+        vocab.resize(params.max_vocab, ("".to_string(), 0));
     }
     vocab.sort_by(
         |(word_1, count_1), (word_2, count_2)| match count_1.cmp(&count_2) {
@@ -65,19 +66,20 @@ fn parse_args() -> Params {
         max_vocab: 0,
         verbose: 2,
     };
-    opts.optopt("verbose", "", "verbosity level (default 2)", "<int>");
+    opts.optopt("", "verbose", "verbosity level (default 2)", "INT");
     opts.optopt(
-        "max-vocab", "",
-        "Upper bound on vocabulary size, i.e. keep the <max-vocab> most frequent words. 
+        "", "max-vocab",
+        "Upper bound on vocabulary size, i.e. keep the <max-vocab> most frequent words. \
         The minimum frequency words are randomly sampled so as to obtain an even distribution over the alphabet.",
-        "<int>"
+        "INT"
     );
     opts.optopt(
-        "min-count",
         "",
+        "min-count",
         "Lower limit such that words which occur fewer than <min-count> times are discarded.",
-        "<int>",
+        "INT",
     );
+    opts.optflag("h", "help", "print this help menu");
     let matches = match opts.parse(&args[1..]) {
         Ok(m) => m,
         Err(f) => panic!(f.to_string()),
@@ -87,6 +89,7 @@ fn parse_args() -> Params {
             "{}",
             opts.usage("Usage: ./vocab_count [options] < corpus.txt > vocab.txt")
         );
+        std::process::exit(0);
     } else {
         params.verbose = match matches.opt_get_default("verbose", params.verbose) {
             Ok(m) => m,
