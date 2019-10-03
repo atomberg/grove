@@ -1,5 +1,40 @@
 use std::cmp::{max, min};
 
+pub struct SparseRecord {
+    pub w1: usize,
+    pub w2: usize,
+    pub cooc: f32,
+}
+
+impl SparseRecord {
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut res = Vec::<u8>::new();
+        res.extend(&self.w1.to_le_bytes());
+        res.extend(&self.w2.to_le_bytes());
+        res.extend(&self.cooc.to_bits().to_le_bytes());
+        res
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() < 20 {
+            None
+        } else {
+            let mut w1_bytes: [u8; 8] = [0; 8];
+            w1_bytes.copy_from_slice(&bytes[0..8]);
+            let mut w2_bytes: [u8; 8] = [0; 8];
+            w2_bytes.copy_from_slice(&bytes[8..16]);
+            let mut cooc_bytes: [u8; 4] = [0; 4];
+            cooc_bytes.copy_from_slice(&bytes[16..20]);
+
+            Some(Self {
+                w1: usize::from_le_bytes(w1_bytes),
+                w2: usize::from_le_bytes(w2_bytes),
+                cooc: f32::from_bits(u32::from_le_bytes(cooc_bytes)),
+            })
+        }
+    }
+}
+
 #[derive(Debug)]
 /// A partially sparse matrix.
 ///
@@ -21,9 +56,9 @@ use std::cmp::{max, min};
 ///        data = [1 2 3 4 5 | 2 4 6 8 10 |  3 6 9 |  4 8 |  5 10]
 /// ```
 /// The remaining elements with products 12, 15, 16, 20 and 25 will be stored separately.
-struct CornerMatrix<T: Copy> {
-    max_size: usize,
-    max_prod: usize,
+pub struct CornerMatrix<T: Copy> {
+    pub max_size: usize,
+    pub max_prod: usize,
     row_offset: Vec<usize>,
     data: Vec<T>,
 }
@@ -46,8 +81,8 @@ impl<T: Copy> CornerMatrix<T> {
         }
     }
 
-    pub fn get(&self, row: usize, col: usize) -> T {
-        self.data[self.row_offset[row] + col]
+    pub fn get(&mut self, row: usize, col: usize) -> &mut T {
+        &mut self.data[self.row_offset[row] + col]
     }
 
     pub fn set(&mut self, row: usize, col: usize, value: T) {
@@ -57,7 +92,7 @@ impl<T: Copy> CornerMatrix<T> {
 
 #[derive(Debug)]
 /// A symmetic variant of a partially sparse matrix.
-struct SymmetricCornerMatrix<T: Copy> {
+pub struct SymmetricCornerMatrix<T: Copy> {
     max_size: usize,
     max_prod: usize,
     row_offset: Vec<usize>,
@@ -99,7 +134,7 @@ impl<T: Copy> SymmetricCornerMatrix<T> {
 }
 
 /// This function
-fn estimate_max_prod(limit: f32, tolerance: f32) -> usize {
+pub fn estimate_max_prod(limit: f32, tolerance: f32) -> usize {
     let mut n: f32 = 1e5;
     let c: f32 = 0.154_431_33;
     while (limit - n * (n.ln() + c)).abs() > tolerance {
@@ -128,8 +163,8 @@ mod tests {
     #[test]
     fn test_matrix_getter_setter() {
         let mut matrix = CornerMatrix::<f64>::new(5, 10, 0.0);
-        assert_eq!(matrix.get(2, 3), 0.0);
+        assert!((*matrix.get(2, 3) - 0.0).abs() < 0.1);
         matrix.set(2, 3, 5.0);
-        assert_eq!(matrix.get(2, 3), 5.0);
+        assert!((*matrix.get(2, 3) - 5.0).abs() < 0.1);
     }
 }
