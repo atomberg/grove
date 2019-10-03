@@ -4,7 +4,6 @@ use getopts::Options;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::env;
-// use std::fs;2
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
 use twox_hash::RandomXxHashBuilder64;
 
@@ -26,7 +25,7 @@ fn main() {
 
     if params.max_vocab > 0 && params.max_vocab < vocab.len() {
         vocab.sort_unstable_by_key(|(_word, count)| 1 - count);
-        vocab.resize(params.max_vocab, ("".to_string(), 0));
+        vocab.truncate(params.max_vocab);
     }
     vocab.sort_by(
         |(word_1, count_1), (word_2, count_2)| match count_1.cmp(&count_2) {
