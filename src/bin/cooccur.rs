@@ -30,8 +30,8 @@ fn main() {
 
     let mut writer = BufWriter::new(io::stdout());
 
-    let n = 189;
-    let table = CornerMatrix::<f32>::new(5, 10, 0.0);
+    let vocab = read_vocab(params.vocab_file);
+    info!("Read {} tokens into the vocabulary hash map", vocab.len());
 
     let overflow_buffer = Vec::<SparseRecord>::with_capacity(params.overflow_length);
 }
@@ -54,19 +54,7 @@ fn read_vocab(vocab_filename: String) -> HashMap<String, usize, RandomXxHashBuil
     map
 }
 
-fn process_line(
-    vocab: &HashMap<String, usize, RandomXxHashBuilder64>,
-    bigram_table: &mut CornerMatrix<f32>,
-    overflow_buffer: &mut Vec<SparseRecord>,
-) {
-    let mut reader = BufReader::new(io::stdin());
-
-    let mut line = String::new();
-    while reader.read_line(&mut line).unwrap() > 0 {
-        let words: Vec<usize> = line
-            .split_whitespace()
-            .collect()
-            .map(|word| vocab.get(word));
+        // How about window-size?
         if overflow_buffer.capacity() < overflow_buffer.len() + words.len() {
             // Flush the overflow buffer and truncate it
             flush_overflow_buffer(&mut overflow_buffer, "whatever".to_string());
@@ -89,6 +77,31 @@ fn process_line(
         line.clear();
     }
 }
+
+fn read_vocab(vocab_filename: String) -> HashMap<String, usize, RandomXxHashBuilder64> {
+    let mut reader = BufReader::new(match fs::File::open(&vocab_filename) {
+        Ok(file) => file,
+        Err(e) => panic!("Could not open {}: {}", vocab_filename, e.to_string()),
+    });
+
+    let mut map: HashMap<String, usize, RandomXxHashBuilder64> = Default::default();
+    let mut line = String::new();
+    let mut rank = 1;
+    while reader.read_line(&mut line).unwrap() > 0 {
+        let words: Vec<&str> = line.split_whitespace().collect();
+        map.insert(words[0].to_string(), rank);
+        line.clear();
+        rank += 1;
+    }
+    map
+}
+
+// fn process_line(
+//     vocab: &HashMap<String, usize, RandomXxHashBuilder64>,
+//     bigram_table: &mut CornerMatrix<f32>,
+//     overflow_buffer: &mut Vec<SparseRecord>,
+// ) {
+// }
 
 fn flush_overflow_buffer(overflow_buffer: &mut Vec<SparseRecord>, filename: String) {
     overflow_buffer.sort_unstable_by(|lhs, rhs| match lhs.w1.cmp(&rhs.w1) {
