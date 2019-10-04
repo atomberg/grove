@@ -1,5 +1,9 @@
 extern crate getopts;
 
+#[macro_use]
+extern crate log;
+
+use env_logger;
 use getopts::Options;
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -14,9 +18,11 @@ struct Params {
 }
 
 fn main() {
+    env_logger::init();
     let params = parse_args();
-    let mut reader = BufReader::new(io::stdin());
 
+    info!("Building vocabulary");
+    let mut reader = BufReader::new(io::stdin());
     let map = hash_counts(&mut reader);
     let mut vocab = Vec::<(String, i32)>::with_capacity(map.len());
     for (word, count) in map {
@@ -36,12 +42,15 @@ fn main() {
     );
 
     let mut writer = BufWriter::new(io::stdout());
+    let mut counter: usize = 0;
     for (word, count) in vocab {
         if count < params.min_count {
             break;
         }
+        counter += 1;
         writeln!(writer, "{} {}", word, count).unwrap();
     }
+    info!("Using vocabulary of size {}", counter);
 }
 
 fn hash_counts(reader: &mut dyn BufRead) -> HashMap<String, i32, RandomXxHashBuilder64> {
