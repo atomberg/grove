@@ -1,5 +1,6 @@
 use std::cmp::{max, min};
 
+#[derive(Copy, Clone)]
 pub struct SparseRecord {
     pub w1: usize,
     pub w2: usize,
