@@ -1,6 +1,10 @@
 extern crate getopts;
 extern crate grove;
 
+#[macro_use]
+extern crate log;
+
+use env_logger;
 use getopts::Options;
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -11,7 +15,7 @@ use twox_hash::RandomXxHashBuilder64;
 
 use grove::{estimate_max_prod, CornerMatrix, SparseRecord};
 
-struct CooccurRecordWithId(u32, u32, f32, u32);
+// struct CooccurRecordWithId(u32, u32, f32, u32);
 
 struct Params {
     window_size: usize,
@@ -25,34 +29,34 @@ struct Params {
 }
 
 fn main() {
+    env_logger::init();
     let params = parse_args();
-    let vocab_hash = read_vocab(params.vocab_file);
 
-    let mut writer = BufWriter::new(io::stdout());
+    info!(
+        "Parsed arguments: max_product={}, overflow_length={}",
+        params.max_product, params.overflow_length
+    );
 
     let vocab = read_vocab(params.vocab_file);
     info!("Read {} tokens into the vocabulary hash map", vocab.len());
 
-    let overflow_buffer = Vec::<SparseRecord>::with_capacity(params.overflow_length);
-}
+    // let mut writer = BufWriter::new(io::stdout());
 
-fn read_vocab(vocab_filename: String) -> HashMap<String, usize, RandomXxHashBuilder64> {
-    let mut reader = BufReader::new(match fs::File::open(&vocab_filename) {
-        Ok(file) => file,
-        Err(e) => panic!("Could not open {}: {}", vocab_filename, e.to_string()),
-    });
+    let mut bigram_table = CornerMatrix::<f32>::new(vocab.len(), params.max_product, 0.0);
+    let mut overflow_buffer = Vec::<SparseRecord>::with_capacity(params.overflow_length);
 
-    let mut map: HashMap<String, usize, RandomXxHashBuilder64> = Default::default();
+    let mut reader = BufReader::new(io::stdin());
     let mut line = String::new();
-    let mut rank = 1;
     while reader.read_line(&mut line).unwrap() > 0 {
-        let words: Vec<&str> = line.split_whitespace().collect();
-        map.insert(words[0].to_string(), rank);
-        line.clear();
-        rank += 1;
-    }
-    map
-}
+        let mut words = Vec::<usize>::with_capacity(32);
+        for word in line.split_whitespace().map(|word| vocab.get(word)) {
+            if let Some(w) = word {
+                words.push(*w);
+            } else {
+                // Deal with unk case?
+                panic!();
+            }
+        }
 
         // How about window-size?
         if overflow_buffer.capacity() < overflow_buffer.len() + words.len() {
@@ -108,7 +112,7 @@ fn flush_overflow_buffer(overflow_buffer: &mut Vec<SparseRecord>, filename: Stri
         Ordering::Equal => lhs.w2.cmp(&rhs.w2),
         x => x,
     });
-    let mut writer = BufWriter::new(match fs::File::create(filename) {
+    let mut writer = BufWriter::new(match fs::File::create(filename.clone()) {
         Ok(file) => file,
         Err(e) => panic!("Could not create {}: {}", filename, e.to_string()),
     });
@@ -122,7 +126,10 @@ fn flush_overflow_buffer(overflow_buffer: &mut Vec<SparseRecord>, filename: Stri
         if rec.w1 == cur_rec.w1 && rec.w2 == cur_rec.w2 {
             cur_rec.cooc += rec.cooc
         } else {
-            writer.write(&cur_rec.to_bytes());
+            match writer.write_all(&cur_rec.to_bytes()) {
+                Ok(n) => n,
+                Err(e) => panic!("Could write to {}: {}", filename, e.to_string()),
+            };
             cur_rec = SparseRecord {
                 w1: rec.w1,
                 w2: rec.w2,
@@ -130,13 +137,16 @@ fn flush_overflow_buffer(overflow_buffer: &mut Vec<SparseRecord>, filename: Stri
             };
         }
     }
-    writer.write(&cur_rec.to_bytes());
+    match writer.write_all(&cur_rec.to_bytes()) {
+        Ok(n) => n,
+        Err(e) => panic!("Could not write to {}: {}", filename, e.to_string()),
+    };
 }
 
 fn parse_args() -> Params {
     let mut params = Params {
         window_size: 15,
-        symmetric: true,
+        symmetric: false,
         memory_limit: 4.0,
         max_product: 0,
         vocab_file: "vocab.txt".to_string(),
@@ -149,11 +159,10 @@ fn parse_args() -> Params {
 
     let mut opts = Options::new();
     opts.optopt("", "verbose", "verbosity level (default 2)", "<int>");
-    opts.optopt(
+    opts.optflag(
         "",
         "symmetric",
-        "if false, only use left context; if true, use left and right (default true)",
-        "<bool>",
+        "if present, use left and right contexts, if not, use left context only",
     );
     opts.optopt(
         "",
@@ -204,10 +213,7 @@ fn parse_args() -> Params {
             Ok(m) => m,
             Err(f) => panic!(f.to_string()),
         };
-        params.symmetric = match matches.opt_get_default("symmetric", params.symmetric) {
-            Ok(m) => m,
-            Err(f) => panic!(f.to_string()),
-        };
+        params.symmetric = matches.opt_present("symmetric");
         params.window_size = match matches.opt_get_default("window-size", params.window_size) {
             Ok(m) => m,
             Err(f) => panic!(f.to_string()),
@@ -221,7 +227,10 @@ fn parse_args() -> Params {
             Err(f) => panic!(f.to_string()),
         };
         params.max_product = match matches.opt_get_default("max-product", params.max_product) {
-            Ok(m) => m,
+            Ok(m) => {
+                debug!("Setting max_prod={}", m);
+                m
+            }
             Err(f) => panic!(f.to_string()),
         };
         params.file_head = match matches.opt_get_default("overflow-file", params.file_head) {
@@ -230,7 +239,15 @@ fn parse_args() -> Params {
         };
     }
     if params.max_product == 0 {
-        params.max_product = estimate_max_prod(0.0, 1e-3);
+        let n = params.memory_limit * (2.0 as f32).powi(30) / 120.0 * 5.0;
+        params.max_product = estimate_max_prod(n, 1e-3);
+        debug!(
+            "Since max_prod was 0, we set it to a heuristic value of {} (N = {})",
+            params.max_product, n
+        );
+    }
+    if params.overflow_length == 0 {
+        params.overflow_length = (params.memory_limit * (2.0 as f32).powi(30) / 120.0) as usize;
     }
     params
 }
