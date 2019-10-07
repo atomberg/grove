@@ -1,5 +1,40 @@
 use std::cmp::{max, min};
 
+pub trait Serialize {
+    // https://github.com/rust-lang/rust/issues/60551
+    const BYTE_SIZE: usize;
+
+    fn to_bytes(&self) -> Vec<u8>;
+
+    fn from_bytes(bytes: Vec<u8>) -> Self;
+}
+
+impl Serialize for f32 {
+    const BYTE_SIZE: usize = 4;
+    fn to_bytes(&self) -> Vec<u8> {
+        self.to_bits().to_le_bytes().to_vec()
+    }
+
+    fn from_bytes(byte_vec: Vec<u8>) -> Self {
+        let mut bytes: [u8; 4] = Default::default();
+        bytes.copy_from_slice(&byte_vec[..4]);
+        f32::from_bits(u32::from_le_bytes(bytes))
+    }
+}
+
+impl Serialize for f64 {
+    const BYTE_SIZE: usize = 8;
+    fn to_bytes(&self) -> Vec<u8> {
+        self.to_bits().to_le_bytes().to_vec()
+    }
+
+    fn from_bytes(byte_vec: Vec<u8>) -> Self {
+        let mut bytes: [u8; 8] = Default::default();
+        bytes.copy_from_slice(&byte_vec[..8]);
+        f64::from_bits(u64::from_le_bytes(bytes))
+    }
+}
+
 #[derive(Copy, Clone)]
 pub struct SparseRecord {
     pub w1: usize,
