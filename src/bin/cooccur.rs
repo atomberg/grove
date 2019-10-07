@@ -100,18 +100,8 @@ fn read_vocab(vocab_filename: String) -> HashMap<String, usize, RandomXxHashBuil
     map
 }
 
-// fn process_line(
-//     vocab: &HashMap<String, usize, RandomXxHashBuilder64>,
-//     bigram_table: &mut CornerMatrix<f32>,
-//     overflow_buffer: &mut Vec<SparseRecord>,
-// ) {
-// }
-
-fn flush_overflow_buffer(overflow_buffer: &mut Vec<SparseRecord>, filename: String) {
-    overflow_buffer.sort_unstable_by(|lhs, rhs| match lhs.w1.cmp(&rhs.w1) {
-        Ordering::Equal => lhs.w2.cmp(&rhs.w2),
-        x => x,
-    });
+fn flush_overflow_buffer(overflow_buffer: &mut Vec<SparseRecord<f32>>, filename: String) {
+    overflow_buffer.sort_unstable();
     let mut writer = BufWriter::new(match fs::File::create(filename.clone()) {
         Ok(file) => file,
         Err(e) => panic!("Could not create {}: {}", filename, e.to_string()),
@@ -123,7 +113,7 @@ fn flush_overflow_buffer(overflow_buffer: &mut Vec<SparseRecord>, filename: Stri
         }
     };
     for rec in overflow_buffer[1..].iter() {
-        if rec.w1 == cur_rec.w1 && rec.w2 == cur_rec.w2 {
+        if cur_rec == *rec {
             cur_rec.cooc += rec.cooc
         } else {
             match writer.write_all(&cur_rec.to_bytes()) {
@@ -131,8 +121,8 @@ fn flush_overflow_buffer(overflow_buffer: &mut Vec<SparseRecord>, filename: Stri
                 Err(e) => panic!("Could write to {}: {}", filename, e.to_string()),
             };
             cur_rec = SparseRecord {
-                w1: rec.w1,
-                w2: rec.w2,
+                row: rec.row,
+                col: rec.col,
                 cooc: rec.cooc,
             };
         }
@@ -174,13 +164,13 @@ fn parse_args() -> Params {
         "",
         "vocab-file",
         "File containing vocabulary (truncated unigram counts, produced by 'vocab_count'); default vocab.txt",
-        "<file>"
+        "<file>",
     );
     opts.optopt(
         "",
         "memory-limit",
         "Soft limit for memory consumption, in GB -- based on simple heuristic, so not extremely accurate; default 4.0",
-        "<float>"
+        "<float>",
     );
     opts.optopt(
         "",
