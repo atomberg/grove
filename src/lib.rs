@@ -1,6 +1,7 @@
 extern crate num;
 
 use num::Float;
+use std::cmp::Ordering;
 use std::cmp::{max, min};
 
 pub trait Serialize {
@@ -72,6 +73,29 @@ impl<F: Float + Serialize> SparseRecord<F> {
     }
 }
 
+impl<F: Float + Serialize> PartialEq for SparseRecord<F> {
+    fn eq(&self, other: &Self) -> bool {
+        self.row == other.row && self.col == other.col
+    }
+}
+
+impl<F: Float + Serialize> Eq for SparseRecord<F> {}
+
+impl<F: Float + Serialize> PartialOrd for SparseRecord<F> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(&other))
+    }
+}
+
+impl<F: Float + Serialize> Ord for SparseRecord<F> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match self.row.cmp(&other.row) {
+            Ordering::Equal => self.col.cmp(&other.col),
+            x => x,
+        }
+    }
+}
+
 #[derive(Debug)]
 /// A partially sparse matrix.
 ///
@@ -137,7 +161,7 @@ impl<F: Float + Serialize> CornerMatrix<F> {
             }
         }
         result
-}
+    }
 }
 
 #[derive(Debug)]
