@@ -40,45 +40,62 @@ fn main() {
     let vocab = read_vocab(params.vocab_file);
     info!("Read {} tokens into the vocabulary hash map", vocab.len());
 
-    // let mut writer = BufWriter::new(io::stdout());
-
-    let mut bigram_table = CornerMatrix::<f32>::new(vocab.len(), params.max_product, 0.0);
-    let mut overflow_buffer = Vec::<SparseRecord>::with_capacity(params.overflow_length);
+    let mut bigram_table = CornerMatrix::<f32>::new(vocab.len(), params.max_product);
+    let mut overflow_buffer = Vec::<SparseRecord<f32>>::with_capacity(params.overflow_length);
 
     let mut reader = BufReader::new(io::stdin());
     let mut line = String::new();
-    while reader.read_line(&mut line).unwrap() > 0 {
         let mut words = Vec::<usize>::with_capacity(32);
+    let mut counter: usize = 0;
+    let mut tmp_files = Vec::<String>::new();
+    while reader.read_line(&mut line).unwrap() > 0 {
         for word in line.split_whitespace().map(|word| vocab.get(word)) {
+            counter += 1;
             if let Some(w) = word {
                 words.push(*w);
-            } else {
-                // Deal with unk case?
-                panic!();
+                // } else {
+                //     // Deal with unk case?
+                //     panic!("A word is not in the vocabulary");
             }
         }
-
-        // How about window-size?
         if overflow_buffer.capacity() < overflow_buffer.len() + words.len() {
             // Flush the overflow buffer and truncate it
-            flush_overflow_buffer(&mut overflow_buffer, "whatever".to_string());
+            tmp_files.push(format!("{}_{:04}.bin", params.file_head, tmp_files.len()));
+            flush_overflow_buffer(&mut overflow_buffer, tmp_files.last().unwrap().clone());
             overflow_buffer.truncate(0);
         }
-        for (i, &focus_word) in words.iter().enumerate() {
-            for (j, &context_word) in words.iter().enumerate() {
-                let cooc = 1.0 / (i - j) as f32;
-                if i * j < bigram_table.max_prod {
-                    *bigram_table.get(focus_word, context_word) += cooc;
+        for (focus_idx, &focus_rank) in words.iter().enumerate() {
+            // Using saturating_sub to get a lower bound of zero without any extra operations
+            for (context_idx, &context_rank) in words[focus_idx.saturating_sub(params.window_size)..focus_idx]
+                .iter()
+                .enumerate()
+            {
+                let cooc = 1.0 / (focus_idx as f32 - context_idx as f32) as f32;
+                if focus_idx * context_idx < bigram_table.max_prod {
+                    *bigram_table.get(focus_rank, context_rank) += cooc;
                 } else {
                     overflow_buffer.push(SparseRecord {
-                        w1: focus_word,
-                        w2: context_word,
+                        row: focus_rank,
+                        col: context_rank,
                         cooc,
                     });
                 }
             }
         }
+        words.clear();
         line.clear();
+    }
+    // Flush the overflow buffer one last time
+    tmp_files.push(format!("{}_{:04}.bin", params.file_head, tmp_files.len()));
+    flush_overflow_buffer(&mut overflow_buffer, tmp_files.last().unwrap().clone());
+    info!("Processed {} tokens", counter);
+
+    let mut writer = BufWriter::new(io::stdout());
+    for record in bigram_table.to_sparse() {
+        match writer.write_all(&record.to_bytes()) {
+            Ok(n) => n,
+            Err(e) => panic!("Could not write to stdout: {}", e.to_string()),
+        };
     }
 }
 
