@@ -1,3 +1,6 @@
+extern crate num;
+
+use num::Float;
 use std::cmp::{max, min};
 
 pub trait Serialize {
@@ -36,36 +39,34 @@ impl Serialize for f64 {
 }
 
 #[derive(Copy, Clone)]
-pub struct SparseRecord {
-    pub w1: usize,
-    pub w2: usize,
-    pub cooc: f32,
+pub struct SparseRecord<F: Float + Serialize> {
+    pub row: usize,
+    pub col: usize,
+    pub cooc: F,
 }
 
-impl SparseRecord {
+impl<F: Float + Serialize> SparseRecord<F> {
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut res = Vec::<u8>::new();
-        res.extend(&self.w1.to_le_bytes());
-        res.extend(&self.w2.to_le_bytes());
-        res.extend(&self.cooc.to_bits().to_le_bytes());
+        res.extend(&self.row.to_le_bytes());
+        res.extend(&self.col.to_le_bytes());
+        res.extend(&self.cooc.to_bytes());
         res
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() < 20 {
+        if bytes.len() != 16 + F::BYTE_SIZE {
             None
         } else {
             let mut w1_bytes: [u8; 8] = [0; 8];
             w1_bytes.copy_from_slice(&bytes[0..8]);
             let mut w2_bytes: [u8; 8] = [0; 8];
             w2_bytes.copy_from_slice(&bytes[8..16]);
-            let mut cooc_bytes: [u8; 4] = [0; 4];
-            cooc_bytes.copy_from_slice(&bytes[16..20]);
 
             Some(Self {
-                w1: usize::from_le_bytes(w1_bytes),
-                w2: usize::from_le_bytes(w2_bytes),
-                cooc: f32::from_bits(u32::from_le_bytes(cooc_bytes)),
+                row: usize::from_le_bytes(w1_bytes),
+                col: usize::from_le_bytes(w2_bytes),
+                cooc: F::from_bytes(bytes[16..16 + F::BYTE_SIZE].to_vec()),
             })
         }
     }
@@ -92,15 +93,15 @@ impl SparseRecord {
 ///        data = [1 2 3 4 5 | 2 4 6 8 10 |  3 6 9 |  4 8 |  5 10]
 /// ```
 /// The remaining elements with products 12, 15, 16, 20 and 25 will be stored separately.
-pub struct CornerMatrix<T: Copy> {
+pub struct CornerMatrix<F: Float + Serialize> {
     pub max_size: usize,
     pub max_prod: usize,
     row_offset: Vec<usize>,
-    data: Vec<T>,
+    data: Vec<F>,
 }
 
-impl<T: Copy> CornerMatrix<T> {
-    pub fn new(max_size: usize, max_prod: usize, initial_value: T) -> Self {
+impl<F: Float + Serialize> CornerMatrix<F> {
+    pub fn new(max_size: usize, max_prod: usize) -> Self {
         let mut last: usize = 0;
         let mut row_offset = Vec::<usize>::with_capacity(max_size);
         row_offset.push(last);
@@ -113,17 +114,30 @@ impl<T: Copy> CornerMatrix<T> {
             max_size,
             max_prod,
             row_offset,
-            data: vec![initial_value; last + min(max_prod / max_size, max_size)],
+            data: vec![F::zero(); last + min(max_prod / max_size, max_size)],
         }
     }
 
-    pub fn get(&mut self, row: usize, col: usize) -> &mut T {
+    pub fn get(&mut self, row: usize, col: usize) -> &mut F {
         &mut self.data[self.row_offset[row] + col]
     }
 
-    pub fn set(&mut self, row: usize, col: usize, value: T) {
+    pub fn set(&mut self, row: usize, col: usize, value: F) {
         self.data[self.row_offset[row] + col] = value;
     }
+
+    pub fn to_sparse(&self) -> Vec<SparseRecord<F>> {
+        let mut result: Vec<SparseRecord<F>> = Vec::with_capacity(self.data.len());
+        for row in 0..self.max_size {
+            for col in 0..(self.row_offset[row] - self.row_offset[row - 1]) {
+                let cooc = self.data[self.row_offset[row] + col];
+                if cooc != F::zero() {
+                    result.push(SparseRecord { row, col, cooc });
+                }
+            }
+        }
+        result
+}
 }
 
 #[derive(Debug)]
@@ -191,14 +205,14 @@ mod tests {
 
     #[test]
     fn test_matrix_creation() {
-        let matrix = CornerMatrix::<f32>::new(5, 10, 0.0);
+        let matrix = CornerMatrix::<f32>::new(5, 10);
         assert_eq!(matrix.row_offset, [0, 5, 10, 13, 15]);
         assert_eq!(matrix.data.len(), 17);
     }
 
     #[test]
     fn test_matrix_getter_setter() {
-        let mut matrix = CornerMatrix::<f64>::new(5, 10, 0.0);
+        let mut matrix = CornerMatrix::<f64>::new(5, 10);
         assert!((*matrix.get(2, 3) - 0.0).abs() < 0.1);
         matrix.set(2, 3, 5.0);
         assert!((*matrix.get(2, 3) - 5.0).abs() < 0.1);
