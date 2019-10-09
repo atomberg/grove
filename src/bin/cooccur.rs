@@ -70,7 +70,7 @@ fn main() {
 
     let mut reader = BufReader::new(io::stdin());
     let mut line = String::new();
-        let mut words = Vec::<usize>::with_capacity(32);
+    let mut words = Vec::<usize>::with_capacity(32);
     let mut counter: usize = 0;
     let mut tmp_files = Vec::<String>::new();
     while reader.read_line(&mut line).unwrap() > 0 {
@@ -102,7 +102,7 @@ fn main() {
                     overflow_buffer.push(SparseRecord {
                         row: focus_rank,
                         col: context_rank,
-                        cooc,
+                        val: cooc,
                     });
                 }
             }
@@ -120,6 +120,84 @@ fn main() {
         match writer.write_all(&record.to_bytes()) {
             Ok(n) => n,
             Err(e) => panic!("Could not write to stdout: {}", e.to_string()),
+        };
+    }
+
+    merge_temp_files(tmp_files, &mut writer);
+}
+
+fn merge_temp_files(tmp_files: Vec<String>, writer: &mut dyn Write) {
+    let mut pq: BinaryHeap<HeapElement> = BinaryHeap::new();
+    let mut file_readers: Vec<Records<std::io::BufReader<std::fs::File>>> = Vec::with_capacity(tmp_files.len());
+    for (file_id, file) in tmp_files.iter().enumerate() {
+        let mut reader = Records {
+            buffer: [0; 20],
+            filename: file.to_string(),
+            reader: BufReader::new(match fs::File::open(&file) {
+                Ok(file) => file,
+                Err(e) => panic!("Could not open {}: {}", file, e.to_string()),
+            }),
+        };
+        match reader.next() {
+            Some(result) => match result {
+                Ok(record) => pq.push(HeapElement { record, file_id }),
+                Err(e) => panic!("Could not read 20 bytes from {}: {}", reader.filename, e.to_string()),
+            },
+            None => panic!("Could not parse bytes {:?} into a SparseRecord", &reader.buffer),
+        };
+        file_readers.push(reader);
+    }
+
+    // Pop from the heap
+    let mut cur: HeapElement = pq.pop().unwrap();
+    let mut prev: HeapElement;
+
+    // Push onto the heap from the same file as the popped element
+    match file_readers[cur.file_id].next() {
+        Some(result) => match result {
+            Ok(record) => pq.push(HeapElement {
+                record,
+                file_id: cur.file_id,
+            }),
+            Err(e) => panic!(
+                "Could not read 20 bytes from {}: {}",
+                file_readers[cur.file_id].filename,
+                e.to_string()
+            ),
+        },
+        None => panic!(
+            "Could not parse bytes {:?} into a SparseRecord",
+            &file_readers[cur.file_id].buffer
+        ),
+    };
+
+    while !pq.is_empty() {
+        prev = cur;
+        cur = pq.pop().unwrap();
+
+        if prev.record == cur.record {
+            cur.record.val += prev.record.val;
+        } else {
+            match writer.write_all(&cur.record.to_bytes()) {
+                Ok(n) => n,
+                Err(e) => panic!("Could not write: {}", e.to_string()),
+            };
+        }
+
+        // Push onto the heap from the same file as the popped element
+        match file_readers[cur.file_id].next() {
+            Some(result) => match result {
+                Ok(record) => pq.push(HeapElement {
+                    record,
+                    file_id: cur.file_id,
+                }),
+                Err(e) => panic!(
+                    "An error occurred while reading bytes from {}: {}",
+                    file_readers[cur.file_id].filename,
+                    e.to_string()
+                ),
+            },
+            None => info!("File {} reached EOF", file_readers[cur.file_id].filename),
         };
     }
 }
@@ -156,7 +234,7 @@ fn flush_overflow_buffer(overflow_buffer: &mut Vec<SparseRecord<f32>>, filename:
     };
     for rec in overflow_buffer[1..].iter() {
         if cur_rec == *rec {
-            cur_rec.cooc += rec.cooc
+            cur_rec.val += rec.val
         } else {
             match writer.write_all(&cur_rec.to_bytes()) {
                 Ok(n) => n,
@@ -165,7 +243,7 @@ fn flush_overflow_buffer(overflow_buffer: &mut Vec<SparseRecord<f32>>, filename:
             cur_rec = SparseRecord {
                 row: rec.row,
                 col: rec.col,
-                cooc: rec.cooc,
+                val: rec.val,
             };
         }
     }
