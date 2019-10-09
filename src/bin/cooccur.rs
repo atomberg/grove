@@ -6,8 +6,7 @@ extern crate log;
 
 use env_logger;
 use getopts::Options;
-use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{BinaryHeap, HashMap};
 use std::env;
 use std::fs;
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
@@ -26,6 +25,32 @@ struct Params {
     file_head: String,
     overflow_length: usize,
     verbose: usize,
+}
+
+pub struct Records<B> {
+    pub filename: String,
+    buffer: [u8; 20],
+    reader: B,
+}
+
+impl<B: BufRead> Iterator for Records<B> {
+    type Item = io::Result<SparseRecord<f32>>;
+
+    fn next(&mut self) -> Option<io::Result<SparseRecord<f32>>> {
+        match self.reader.read_exact(&mut self.buffer) {
+            Ok(()) => match SparseRecord::from_bytes(&self.buffer) {
+                Some(record) => Some(Ok(record)),
+                None => None,
+            },
+            Err(e) => Some(Err(e)),
+        }
+    }
+}
+
+#[derive(PartialEq, PartialOrd, Eq, Ord)]
+struct HeapElement {
+    record: SparseRecord<f32>,
+    file_id: usize,
 }
 
 fn main() {
