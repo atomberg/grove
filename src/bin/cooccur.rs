@@ -12,9 +12,7 @@ use std::fs;
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
 use twox_hash::RandomXxHashBuilder64;
 
-use grove::{estimate_max_prod, CornerMatrix, SparseRecord};
-
-// struct CooccurRecordWithId(u32, u32, f32, u32);
+use grove::{estimate_max_prod, record_io::Records, sparse::CornerMatrix, sparse::SparseRecord};
 
 struct Params {
     window_size: usize,
@@ -25,26 +23,6 @@ struct Params {
     file_head: String,
     overflow_length: usize,
     verbose: usize,
-}
-
-pub struct Records<B> {
-    pub filename: String,
-    buffer: [u8; 20],
-    reader: B,
-}
-
-impl<B: BufRead> Iterator for Records<B> {
-    type Item = io::Result<SparseRecord<f32>>;
-
-    fn next(&mut self) -> Option<io::Result<SparseRecord<f32>>> {
-        match self.reader.read_exact(&mut self.buffer) {
-            Ok(()) => match SparseRecord::from_bytes(&self.buffer) {
-                Some(record) => Some(Ok(record)),
-                None => None,
-            },
-            Err(e) => Some(Err(e)),
-        }
-    }
 }
 
 #[derive(PartialEq, PartialOrd, Eq, Ord)]
@@ -64,6 +42,7 @@ fn main() {
 
     let vocab = read_vocab(params.vocab_file);
     info!("Read {} tokens into the vocabulary hash map", vocab.len());
+    debug!("{:?}", vocab);
 
     let mut bigram_table = CornerMatrix::<f32>::new(vocab.len(), params.max_product);
     let mut overflow_buffer = Vec::<SparseRecord<f32>>::with_capacity(params.overflow_length);
@@ -74,15 +53,17 @@ fn main() {
     let mut counter: usize = 0;
     let mut tmp_files = Vec::<String>::new();
     while reader.read_line(&mut line).unwrap() > 0 {
+        debug!("Line: '{}'", line);
         for word in line.split_whitespace().map(|word| vocab.get(word)) {
             counter += 1;
             if let Some(w) = word {
-                words.push(*w);
+                words.push(*w - 1);
                 // } else {
                 //     // Deal with unk case?
                 //     panic!("A word is not in the vocabulary");
             }
         }
+        debug!("Words: '{:?}'", words);
         if overflow_buffer.capacity() < overflow_buffer.len() + words.len() {
             // Flush the overflow buffer and truncate it
             tmp_files.push(format!("{}_{:04}.bin", params.file_head, tmp_files.len()));
@@ -90,13 +71,15 @@ fn main() {
             overflow_buffer.truncate(0);
         }
         for (focus_idx, &focus_rank) in words.iter().enumerate() {
+            debug!("Focus: idx={}, rank={}", focus_idx, focus_rank);
             // Using saturating_sub to get a lower bound of zero without any extra operations
             for (context_idx, &context_rank) in words[focus_idx.saturating_sub(params.window_size)..focus_idx]
                 .iter()
                 .enumerate()
             {
                 let cooc = 1.0 / (focus_idx as f32 - context_idx as f32) as f32;
-                if focus_idx * context_idx < bigram_table.max_prod {
+                debug!("Processing ({}, {}, {})", focus_rank, context_rank, cooc);
+                if (focus_rank + 1) * (context_rank + 1) <= bigram_table.max_prod {
                     *bigram_table.get(focus_rank, context_rank) += cooc;
                 } else {
                     overflow_buffer.push(SparseRecord {
@@ -111,9 +94,13 @@ fn main() {
         line.clear();
     }
     // Flush the overflow buffer one last time
-    tmp_files.push(format!("{}_{:04}.bin", params.file_head, tmp_files.len()));
-    flush_overflow_buffer(&mut overflow_buffer, tmp_files.last().unwrap().clone());
+    if !overflow_buffer.is_empty() {
+        tmp_files.push(format!("{}_{:04}.bin", params.file_head, tmp_files.len()));
+        flush_overflow_buffer(&mut overflow_buffer, tmp_files.last().unwrap().clone());
+    }
     info!("Processed {} tokens", counter);
+    debug!("Table = {:?}", bigram_table);
+    debug!("Overflow = {:?}", overflow_buffer);
 
     let mut writer = BufWriter::new(io::stdout());
     for record in bigram_table.to_sparse() {
@@ -123,7 +110,11 @@ fn main() {
         };
     }
 
-    merge_temp_files(tmp_files, &mut writer);
+    info!("Wrote {} dense elements of the cooccurrence matrix", bigram_table.len());
+
+    if !tmp_files.is_empty() {
+        merge_temp_files(tmp_files, &mut writer);
+    }
 }
 
 fn merge_temp_files(tmp_files: Vec<String>, writer: &mut dyn Write) {
@@ -138,19 +129,24 @@ fn merge_temp_files(tmp_files: Vec<String>, writer: &mut dyn Write) {
                 Err(e) => panic!("Could not open {}: {}", file, e.to_string()),
             }),
         };
-        match reader.next() {
-            Some(result) => match result {
-                Ok(record) => pq.push(HeapElement { record, file_id }),
-                Err(e) => panic!("Could not read 20 bytes from {}: {}", reader.filename, e.to_string()),
-            },
-            None => panic!("Could not parse bytes {:?} into a SparseRecord", &reader.buffer),
-        };
+        if let Some(result) = reader.next() {
+            if let Ok(record) = result {
+                pq.push(HeapElement { record, file_id });
+            }
+        } else {
+            panic!(
+                "Could not read 20 bytes from {} and parse them into a SparseRecord",
+                &reader.filename
+            );
+        }
         file_readers.push(reader);
     }
 
     // Pop from the heap
     let mut cur: HeapElement = pq.pop().unwrap();
     let mut prev: HeapElement;
+
+    debug!("Current = {}, {:?}, Prev = None", cur.file_id, cur.record);
 
     // Push onto the heap from the same file as the popped element
     match file_readers[cur.file_id].next() {
@@ -165,41 +161,51 @@ fn merge_temp_files(tmp_files: Vec<String>, writer: &mut dyn Write) {
                 e.to_string()
             ),
         },
-        None => panic!(
-            "Could not parse bytes {:?} into a SparseRecord",
-            &file_readers[cur.file_id].buffer
-        ),
+        None => {
+            // &file_readers[cur.file_id].reader.close();
+            panic!(
+                "Could not parse bytes {:?} into a SparseRecord",
+                &file_readers[cur.file_id].buffer
+            )
+        }
     };
 
     while !pq.is_empty() {
         prev = cur;
         cur = pq.pop().unwrap();
 
+        debug!(
+            "Current = {}, {:?}, Prev = {}, {:?}",
+            cur.file_id, cur.record, prev.file_id, prev.record
+        );
+
         if prev.record == cur.record {
             cur.record.val += prev.record.val;
         } else {
-            match writer.write_all(&cur.record.to_bytes()) {
+            match writer.write_all(&prev.record.to_bytes()) {
                 Ok(n) => n,
                 Err(e) => panic!("Could not write: {}", e.to_string()),
             };
         }
 
         // Push onto the heap from the same file as the popped element
-        match file_readers[cur.file_id].next() {
-            Some(result) => match result {
-                Ok(record) => pq.push(HeapElement {
+        if let Some(result) = file_readers[cur.file_id].next() {
+            if let Ok(record) = result {
+                pq.push(HeapElement {
                     record,
                     file_id: cur.file_id,
-                }),
-                Err(e) => panic!(
-                    "An error occurred while reading bytes from {}: {}",
-                    file_readers[cur.file_id].filename,
-                    e.to_string()
-                ),
-            },
-            None => info!("File {} reached EOF", file_readers[cur.file_id].filename),
-        };
+                })
+            } else {
+                info!("File {} reached EOF", file_readers[cur.file_id].filename);
+            }
+        }
     }
+
+    // Heap is empty now, but cur was not flushed to stdout yet
+    match writer.write_all(&cur.record.to_bytes()) {
+        Ok(n) => n,
+        Err(e) => panic!("Could not write: {}", e.to_string()),
+    };
 }
 
 fn read_vocab(vocab_filename: String) -> HashMap<String, usize, RandomXxHashBuilder64> {
@@ -360,4 +366,15 @@ fn parse_args() -> Params {
         params.overflow_length = (params.memory_limit * (2.0 as f32).powi(30) / 120.0) as usize;
     }
     params
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_vocab() {
+        let n = estimate_max_prod(1024.0, 1e-3);
+        assert_eq!(n, 189);
+    }
 }
