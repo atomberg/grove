@@ -83,8 +83,8 @@ fn main() {
                     *bigram_table.get(focus_rank, context_rank) += cooc;
                 } else {
                     overflow_buffer.push(SparseRecord {
-                        row: focus_rank,
-                        col: context_rank,
+                        row: focus_rank as u32,
+                        col: context_rank as u32,
                         val: cooc,
                     });
                 }
@@ -122,7 +122,7 @@ fn merge_temp_files(tmp_files: Vec<String>, writer: &mut dyn Write) {
     let mut file_readers: Vec<Records<std::io::BufReader<std::fs::File>>> = Vec::with_capacity(tmp_files.len());
     for (file_id, file) in tmp_files.iter().enumerate() {
         let mut reader = Records {
-            buffer: [0; 20],
+            buffer: [0; 12],
             filename: file.to_string(),
             reader: BufReader::new(match fs::File::open(&file) {
                 Ok(file) => file,

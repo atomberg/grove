@@ -43,8 +43,8 @@ impl Serialize for f64 {
 /// A serializable (row, col, val) triple for representing sparse matrix elements.
 #[derive(Debug, Copy, Clone)]
 pub struct SparseRecord<F: Float + Serialize> {
-    pub row: usize,
-    pub col: usize,
+    pub row: u32,
+    pub col: u32,
     pub val: F,
 }
 
@@ -58,18 +58,18 @@ impl<F: Float + Serialize> SparseRecord<F> {
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() != 16 + F::BYTE_SIZE {
+        if bytes.len() != 8 + F::BYTE_SIZE {
             None
         } else {
-            let mut w1_bytes: [u8; 8] = [0; 8];
-            w1_bytes.copy_from_slice(&bytes[0..8]);
-            let mut w2_bytes: [u8; 8] = [0; 8];
-            w2_bytes.copy_from_slice(&bytes[8..16]);
+            let mut w1_bytes: [u8; 4] = [0; 4];
+            w1_bytes.copy_from_slice(&bytes[0..4]);
+            let mut w2_bytes: [u8; 4] = [0; 4];
+            w2_bytes.copy_from_slice(&bytes[4..8]);
 
             Some(Self {
-                row: usize::from_le_bytes(w1_bytes),
-                col: usize::from_le_bytes(w2_bytes),
-                val: F::from_bytes(bytes[16..16 + F::BYTE_SIZE].to_vec()),
+                row: u32::from_le_bytes(w1_bytes),
+                col: u32::from_le_bytes(w2_bytes),
+                val: F::from_bytes(bytes[8..8 + F::BYTE_SIZE].to_vec()),
             })
         }
     }
@@ -105,7 +105,7 @@ impl<F: Float + Serialize> Ord for SparseRecord<F> {
 /// We define the boundaries of the dense part by the maximum product of row * column indices, starting from 1.
 ///
 /// For example for `max_size = 5`, the product of indices is as follows:
-/// ```
+/// ```ignore
 ///     1  2  3  4  5
 ///     2  4  6  8 10
 ///     3  6  9 12 15
@@ -114,7 +114,7 @@ impl<F: Float + Serialize> Ord for SparseRecord<F> {
 /// ```
 /// If `max_prod = 10`, we will pack all of the elements where row x col <= 10 into
 /// a single data vector, using the `row_offset` to quickly access any stored element.
-/// ```
+/// ```ignore
 ///  row_offset = [0         | 5          | 10     | 13   | 15   | 17]
 ///        data = [1 2 3 4 5 | 2 4 6 8 10 |  3 6 9 |  4 8 |  5 10]
 /// ```
@@ -170,7 +170,11 @@ impl<F: Float + Serialize> CornerMatrix<F> {
             for col in 0..(self.row_offset[row + 1].saturating_sub(self.row_offset[row])) {
                 let val = self.data[self.row_offset[row] + col];
                 if val != F::zero() {
-                    result.push(SparseRecord { row, col, val });
+                    result.push(SparseRecord {
+                        row: row as u32,
+                        col: col as u32,
+                        val,
+                    });
                 }
             }
         }

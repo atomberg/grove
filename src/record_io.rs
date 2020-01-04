@@ -4,7 +4,7 @@ use super::sparse::SparseRecord;
 
 pub struct Records<B> {
     pub filename: String,
-    pub buffer: [u8; 20],
+    pub buffer: [u8; 12],
     pub reader: B,
 }
 
