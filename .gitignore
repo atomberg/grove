@@ -1,2 +1,6 @@
 /target
 **/*.rs.bk
+
+*.bin
+*.txt
+*.code-workspace
