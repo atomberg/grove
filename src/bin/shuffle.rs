@@ -4,7 +4,8 @@ extern crate rand;
 
 use env_logger;
 use getopts::Options;
-// use rand::distributions::Uniform;
+use rand::seq::SliceRandom;
+use rand::thread_rng;
 use std::env;
 use std::io::{self, BufReader, BufWriter, Write};
 
@@ -18,13 +19,13 @@ struct Params {
 
 fn main() {
     env_logger::init();
+    info!("Starting");
     let params = parse_args();
-    let mut rng = rand::thread_rng();
     info!("Starting to shuffle with array_size={}", params.array_size);
 
     let mut shuffling_buffer = Vec::<SparseRecord<f32>>::with_capacity(params.array_size + 1);
     let mut reader = Records {
-        buffer: [0; 20],
+        buffer: [0; 12],
         filename: "stdin".to_string(),
         reader: BufReader::new(io::stdin()),
     };
@@ -37,9 +38,10 @@ fn main() {
             }
         }
     }
-    // shuffling_buffer.shuffle(&mut rng);
-    // let between = Uniform::from(0..shuffling_buffer.len());
+    info!("Filled the buffer, shuffling now");
+    shuffling_buffer.shuffle(&mut thread_rng());
 
+    info!("Buffer shuffled, let's go!");
     let mut writer = BufWriter::new(io::stdout());
     for next in reader {
         let i = 0; // rng.gen_range(0, shuffling_buffer.len());
