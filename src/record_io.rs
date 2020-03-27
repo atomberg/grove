@@ -40,7 +40,7 @@ mod tests {
         let cur = io::Cursor::new(bytes);
         let mut records = Records {
             filename: "memory".to_string(),
-            buffer: [0; 20],
+            buffer: [0; 12],
             reader: cur,
         };
         for i in 1..5 {

@@ -12,9 +12,7 @@ use std::io::{self, BufReader, BufWriter, Write};
 use grove::{record_io::Records, sparse::SparseRecord};
 
 struct Params {
-    memory_limit: usize,
     array_size: usize,
-    temp_file: String,
 }
 
 fn main() {
@@ -48,6 +46,9 @@ fn main() {
         if let Ok(record) = next {
             shuffling_buffer.push(record);
         }
+        if shuffling_buffer.is_empty() {
+            break;
+        }
         let record = shuffling_buffer.swap_remove(i);
         match writer.write_all(&record.to_bytes()) {
             Ok(n) => n,
@@ -59,29 +60,13 @@ fn main() {
 fn parse_args() -> Params {
     let args: Vec<String> = env::args().collect();
     let mut opts = Options::new();
-    let mut params = Params {
-        memory_limit: 0,
-        array_size: 0,
-        temp_file: "temp_shuffle".to_string(),
-    };
+    let mut params = Params { array_size: 0 };
 
-    opts.optopt(
-        "",
-        "memory-limit",
-        "Soft limit for memory consumption, in GB -- based on simple heuristic, so not extremely accurate; default 4.0",
-        "<float>",
-    );
     opts.optopt(
         "",
         "array-size",
         "Limit to length of the buffer which stores chunks of data to shuffle before writing to disk.",
         "<int>",
-    );
-    opts.optopt(
-        "",
-        "temp-file",
-        "Filename, excluding extension, for temporary file; default overflow",
-        "<file>",
     );
     opts.optflag("h", "help", "print this help menu");
     let matches = match opts.parse(&args[1..]) {
@@ -95,15 +80,7 @@ fn parse_args() -> Params {
         );
         std::process::exit(0);
     } else {
-        params.memory_limit = match matches.opt_get_default("memory-limit", params.memory_limit) {
-            Ok(m) => m,
-            Err(f) => panic!(f.to_string()),
-        };
         params.array_size = match matches.opt_get_default("array-size", params.array_size) {
-            Ok(m) => m,
-            Err(f) => panic!(f.to_string()),
-        };
-        params.temp_file = match matches.opt_get_default("temp-file", params.temp_file) {
             Ok(m) => m,
             Err(f) => panic!(f.to_string()),
         };
