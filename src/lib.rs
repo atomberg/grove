@@ -4,6 +4,7 @@ use num::Float;
 
 pub mod record_io;
 pub mod sparse;
+pub mod word_vectors;
 
 /// This function
 pub fn estimate_max_prod<F: Float>(limit: F, tolerance: F) -> usize {
