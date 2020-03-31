@@ -6,19 +6,20 @@ use ndarray::{arr1, Array1};
 use num::{range_step, Float};
 use rand::{distributions::Uniform, Rng};
 
+#[derive(Debug, Clone)]
 pub struct SGDParams {
-    alpha: f32,
-    x_max: f32,
-    eta: f32,
-    grad_clip_value: f32,
+    pub alpha: f32,
+    pub x_max: f32,
+    pub eta: f32,
+    pub grad_clip_value: f32,
 }
 
 #[derive(Debug, Clone)]
 pub struct WordVector<F: Float + Serialize> {
-    weights: Array1<F>,
-    bias: F,
-    weights_gradsq: Array1<F>,
-    bias_gradsq: F,
+    pub weights: Array1<F>,
+    pub bias: F,
+    pub weights_gradsq: Array1<F>,
+    pub bias_gradsq: F,
 }
 
 impl<F: Float + Serialize> WordVector<F> {
