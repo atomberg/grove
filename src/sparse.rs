@@ -236,7 +236,7 @@ mod tests {
             col: 2,
             val: 3.0 as f32,
         };
-        let mut buf: [u8; 20] = [0; 20];
+        let mut buf: [u8; 12] = [0; 12];
         buf.copy_from_slice(&a.to_bytes());
         assert_eq!(a, SparseRecord::<f32>::from_bytes(&buf).unwrap());
     }
@@ -248,7 +248,7 @@ mod tests {
             col: 2,
             val: 3.0 as f64,
         };
-        let mut buf: [u8; 24] = [0; 24];
+        let mut buf: [u8; 16] = [0; 16];
         buf.copy_from_slice(&a.to_bytes());
         assert_eq!(a, SparseRecord::<f64>::from_bytes(&buf).unwrap());
     }
