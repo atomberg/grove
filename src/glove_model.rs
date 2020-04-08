@@ -1,11 +1,58 @@
+extern crate bincode;
 extern crate num;
 extern crate rand;
+extern crate serde;
 
 use super::sparse::Serialize;
 use hogwild::{HogwildArray1, HogwildArray2};
 use ndarray::{Array1, Array2};
 use num::Float;
 use rand::{distributions::Uniform, Rng};
+use serde::{de::DeserializeOwned, Deserialize, Serialize as SerdeSerialize};
+use std::fs;
+use std::io::{BufReader, BufWriter, Write};
+
+pub enum ReadWriteError {
+    IoError(std::io::Error),
+    EncodeError,
+    DecodeError,
+}
+
+#[derive(Clone, Deserialize, SerdeSerialize)]
+struct ModelWeights<F: Float + Serialize> {
+    focus_vectors: Array2<F>,
+    focus_bias: Array1<F>,
+    context_vector: Array2<F>,
+    context_bias: Array1<F>,
+}
+
+impl<F: Float + Serialize + SerdeSerialize + DeserializeOwned> ModelWeights<F> {
+    pub fn to_file(&self, path: &str) -> Result<(), ReadWriteError> {
+        let bytes = match bincode::serialize(&self) {
+            Ok(b) => b,
+            Err(e) => return Err(ReadWriteError::EncodeError),
+        };
+        let mut fout = BufWriter::new(match fs::File::create(path) {
+            Ok(fout) => fout,
+            Err(e) => return Err(ReadWriteError::IoError(e)),
+        });
+        match fout.write_all(bytes.as_slice()) {
+            Ok(x) => Ok(x),
+            Err(e) => Err(ReadWriteError::IoError(e)),
+        }
+    }
+
+    pub fn from_file(path: &str) -> Result<Self, ReadWriteError> {
+        let fin = BufReader::new(match fs::File::open(path) {
+            Ok(fin) => fin,
+            Err(e) => return Err(ReadWriteError::IoError(e)),
+        });
+        match bincode::deserialize_from(fin) {
+            Ok(x) => Ok(x),
+            Err(e) => Err(ReadWriteError::DecodeError),
+        }
+    }
+}
 
 // Unsafe arrays for Hogwild method of parallel Stochastic Gradient descent
 #[derive(Clone)]
@@ -20,7 +67,7 @@ pub struct Model<F: Float + Serialize> {
     pub grad_context_bias: HogwildArray1<F>,
 }
 
-impl<F: Float + Serialize> Model<F> {
+impl<F: Float + Serialize + SerdeSerialize + DeserializeOwned> Model<F> {
     pub fn new(vocab_size: usize, vector_size: usize) -> Self {
         Model {
             focus_vectors: Array2::zeros((vocab_size, vector_size)).into(),
@@ -35,84 +82,55 @@ impl<F: Float + Serialize> Model<F> {
         }
     }
 
-    pub fn weights_to_bytes(&self) -> Vec<u8> {
-        let n_bytes = self.focus_vectors.view().len()
-            + self.focus_bias.view().len()
-            + self.context_vector.view().len()
-            + self.context_bias.view().len();
-        let mut res = Vec::<u8>::with_capacity(n_bytes * F::BYTE_SIZE);
-        for x in self.focus_bias.view().iter() {
-            res.extend(&x.to_bytes());
-        }
-        for x in self.focus_bias.view().iter() {
-            res.extend(&x.to_bytes());
-        }
-        for x in self.context_vector.view().iter() {
-            res.extend(&x.to_bytes());
-        }
-        for x in self.context_bias.view().iter() {
-            res.extend(&x.to_bytes());
-        }
-        res
+    pub fn from_file(weights_path: &str, gradients_path: Option<&str>) -> Result<Self, ReadWriteError> {
+        let weights = match ModelWeights::from_file(weights_path) {
+            Ok(w) => w,
+            Err(e) => return Err(e),
+        };
+        let grads = match gradients_path {
+            Some(path) => match ModelWeights::from_file(path) {
+                Ok(w) => w,
+                Err(e) => return Err(e),
+            },
+            None => ModelWeights {
+                focus_vectors: Array2::ones(weights.focus_vectors.dim()),
+                focus_bias: Array1::ones(weights.focus_bias.dim()),
+                context_vector: Array2::ones(weights.context_vector.dim()),
+                context_bias: Array1::ones(weights.context_bias.dim()),
+            },
+        };
+        Ok(Model {
+            focus_vectors: weights.focus_vectors.into(),
+            focus_bias: weights.focus_bias.into(),
+            context_vector: weights.context_vector.into(),
+            context_bias: weights.context_bias.into(),
+
+            grad_focus_vectors: grads.focus_vectors.into(),
+            grad_focus_bias: grads.focus_bias.into(),
+            grad_context_vector: grads.context_vector.into(),
+            grad_context_bias: grads.context_bias.into(),
+        })
     }
 
-    pub fn gradients_to_bytes(&self) -> Vec<u8> {
-        let n_bytes = self.grad_focus_vectors.view().len()
-            + self.grad_focus_bias.view().len()
-            + self.grad_context_vector.view().len()
-            + self.grad_context_bias.view().len();
-        let mut res = Vec::<u8>::with_capacity(n_bytes * F::BYTE_SIZE);
-        for x in self.grad_focus_bias.view().iter() {
-            res.extend(&x.to_bytes());
-        }
-        for x in self.grad_focus_bias.view().iter() {
-            res.extend(&x.to_bytes());
-        }
-        for x in self.grad_context_vector.view().iter() {
-            res.extend(&x.to_bytes());
-        }
-        for x in self.grad_context_bias.view().iter() {
-            res.extend(&x.to_bytes());
-        }
-        res
+    pub fn weights_to_file(&self, path: &str) -> Result<(), ReadWriteError> {
+        let weights = ModelWeights {
+            focus_vectors: self.focus_vectors.view().into_owned(),
+            focus_bias: self.focus_bias.view().into_owned(),
+            context_vector: self.context_vector.view().into_owned(),
+            context_bias: self.context_bias.view().into_owned(),
+        };
+        weights.to_file(path)
     }
 
-    // pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-    //     if bytes.len() % F::BYTE_SIZE != 0 || (bytes.len() / F::BYTE_SIZE - 2) % 2 != 0 {
-    //         None
-    //     } else {
-    //         let n = (bytes.len() / F::BYTE_SIZE - 2) / 2;
-    //         let mut weights = Vec::<F>::with_capacity(n);
-    //         let mut weights_gradsq = Vec::<F>::with_capacity(n);
-    //         let mut buf: [u8; 8] = [0; 8];
-    //         // Unpack weights
-    //         for i in range_step(0, n * F::BYTE_SIZE, F::BYTE_SIZE) {
-    //             buf[0..F::BYTE_SIZE].copy_from_slice(&bytes[i..(i + F::BYTE_SIZE)]);
-    //             weights.push(F::from_bytes(buf[0..F::BYTE_SIZE].to_vec()));
-    //         }
-
-    //         // Unpack bias
-    //         buf[0..F::BYTE_SIZE].copy_from_slice(&bytes[(n * F::BYTE_SIZE)..((n + 1) * F::BYTE_SIZE)]);
-    //         let bias = F::from_bytes(buf[0..F::BYTE_SIZE].to_vec());
-
-    //         // Unpack weight gradients
-    //         for i in range_step((n + 1) * F::BYTE_SIZE, (2 * n + 1) * F::BYTE_SIZE, F::BYTE_SIZE) {
-    //             buf[0..F::BYTE_SIZE].copy_from_slice(&bytes[i..(i + F::BYTE_SIZE)]);
-    //             weights_gradsq.push(F::from_bytes(buf[0..F::BYTE_SIZE].to_vec()));
-    //         }
-
-    //         // Unpack bias gradients
-    //         buf[0..F::BYTE_SIZE].copy_from_slice(&bytes[((2 * n + 1) * F::BYTE_SIZE)..((2 * n + 2) * F::BYTE_SIZE)]);
-    //         let bias_gradsq = F::from_bytes(buf[0..F::BYTE_SIZE].to_vec());
-
-    //         Some(WordVector {
-    //             weights: arr1(&weights),
-    //             bias,
-    //             weights_gradsq: arr1(&weights_gradsq),
-    //             bias_gradsq,
-    //         })
-    //     }
-    // }
+    pub fn gradients_to_file(&self, path: &str) -> Result<(), ReadWriteError> {
+        let weights = ModelWeights {
+            focus_vectors: self.grad_focus_vectors.view().into_owned(),
+            focus_bias: self.grad_focus_bias.view().into_owned(),
+            context_vector: self.grad_context_vector.view().into_owned(),
+            context_bias: self.grad_context_bias.view().into_owned(),
+        };
+        weights.to_file(path)
+    }
 }
 
 impl<F: Float + Serialize> PartialEq for Model<F> {
