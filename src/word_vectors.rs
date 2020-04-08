@@ -1,10 +1,11 @@
+extern crate bincode;
 extern crate num;
 extern crate rand;
+extern crate serde;
 
-use super::sparse::Serialize;
 use ndarray::{arr1, Array1};
-use num::{range_step, Float};
 use rand::{distributions::Uniform, Rng};
+use serde::{Deserialize, Serialize as SerdeSerialize};
 
 #[derive(Debug, Clone)]
 pub struct SGDParams {
@@ -14,76 +15,34 @@ pub struct SGDParams {
     pub grad_clip_value: f32,
 }
 
-#[derive(Debug, Clone)]
-pub struct WordVector<F: Float + Serialize> {
-    pub weights: Array1<F>,
-    pub bias: F,
-    pub weights_gradsq: Array1<F>,
-    pub bias_gradsq: F,
+#[derive(Clone, Debug, Deserialize, SerdeSerialize)]
+pub struct WordVector {
+    pub weights: Array1<f32>,
+    pub bias: f32,
+    pub weights_gradsq: Array1<f32>,
+    pub bias_gradsq: f32,
 }
 
-impl<F: Float + Serialize> WordVector<F> {
+impl WordVector {
     pub fn new(vector_size: usize) -> Self {
         WordVector {
             weights: Array1::zeros(vector_size),
-            bias: F::zero(),
+            bias: 0f32,
             weights_gradsq: Array1::ones(vector_size),
-            bias_gradsq: F::one(),
+            bias_gradsq: 1f32,
         }
     }
 
-    pub fn to_bytes(&self) -> Vec<u8> {
-        let mut res = Vec::<u8>::with_capacity((self.weights.len() + self.weights_gradsq.len() + 2) * F::BYTE_SIZE);
-        for x in (&self.weights).iter() {
-            res.extend(&x.to_bytes());
-        }
-        res.extend(&self.bias.to_bytes());
-        for x in (&self.weights_gradsq).iter() {
-            res.extend(&x.to_bytes());
-        }
-        res.extend(&self.bias_gradsq.to_bytes());
-        res
+    pub fn to_bytes(&self) -> bincode::Result<Vec<u8>> {
+        bincode::serialize(&self)
     }
 
-    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() % F::BYTE_SIZE != 0 || (bytes.len() / F::BYTE_SIZE - 2) % 2 != 0 {
-            None
-        } else {
-            let n = (bytes.len() / F::BYTE_SIZE - 2) / 2;
-            let mut weights = Vec::<F>::with_capacity(n);
-            let mut weights_gradsq = Vec::<F>::with_capacity(n);
-            let mut buf: [u8; 8] = [0; 8];
-            // Unpack weights
-            for i in range_step(0, n * F::BYTE_SIZE, F::BYTE_SIZE) {
-                buf[0..F::BYTE_SIZE].copy_from_slice(&bytes[i..(i + F::BYTE_SIZE)]);
-                weights.push(F::from_bytes(buf[0..F::BYTE_SIZE].to_vec()));
-            }
-
-            // Unpack bias
-            buf[0..F::BYTE_SIZE].copy_from_slice(&bytes[(n * F::BYTE_SIZE)..((n + 1) * F::BYTE_SIZE)]);
-            let bias = F::from_bytes(buf[0..F::BYTE_SIZE].to_vec());
-
-            // Unpack weight gradients
-            for i in range_step((n + 1) * F::BYTE_SIZE, (2 * n + 1) * F::BYTE_SIZE, F::BYTE_SIZE) {
-                buf[0..F::BYTE_SIZE].copy_from_slice(&bytes[i..(i + F::BYTE_SIZE)]);
-                weights_gradsq.push(F::from_bytes(buf[0..F::BYTE_SIZE].to_vec()));
-            }
-
-            // Unpack bias gradients
-            buf[0..F::BYTE_SIZE].copy_from_slice(&bytes[((2 * n + 1) * F::BYTE_SIZE)..((2 * n + 2) * F::BYTE_SIZE)]);
-            let bias_gradsq = F::from_bytes(buf[0..F::BYTE_SIZE].to_vec());
-
-            Some(WordVector {
-                weights: arr1(&weights),
-                bias,
-                weights_gradsq: arr1(&weights_gradsq),
-                bias_gradsq,
-            })
-        }
+    pub fn from_bytes(bytes: &[u8]) -> bincode::Result<Self> {
+        bincode::deserialize(bytes)
     }
 }
 
-impl<F: Float + Serialize> PartialEq for WordVector<F> {
+impl PartialEq for WordVector {
     fn eq(&self, other: &Self) -> bool {
         self.weights == other.weights
             && self.bias == other.bias
@@ -92,24 +51,9 @@ impl<F: Float + Serialize> PartialEq for WordVector<F> {
     }
 }
 
-impl<F: Float + Serialize> Eq for WordVector<F> {}
+impl Eq for WordVector {}
 
-impl WordVector<f64> {
-    pub fn with_random_weights(vector_size: usize) -> Self {
-        let bound = 0.5 / (vector_size + 1) as f64;
-        let between = Uniform::new(-bound, bound);
-        let rng = rand::thread_rng();
-        let weights: Vec<f64> = rng.sample_iter(between).take(vector_size).collect();
-        WordVector {
-            weights: arr1(&weights),
-            bias: 0f64,
-            weights_gradsq: Array1::ones(vector_size),
-            bias_gradsq: 1f64,
-        }
-    }
-}
-
-impl WordVector<f32> {
+impl WordVector {
     pub fn with_random_weights(vector_size: usize) -> Self {
         let bound = 0.5 / (vector_size + 1) as f32;
         let between = Uniform::new(-bound, bound);
@@ -125,8 +69,8 @@ impl WordVector<f32> {
 }
 
 pub fn sgd_step(
-    focus: &mut WordVector<f32>,
-    context: &mut WordVector<f32>,
+    focus: &mut WordVector,
+    context: &mut WordVector,
     target_value: f32,
     sgd_params: SGDParams,
 ) -> Option<f32> {
@@ -185,32 +129,27 @@ mod tests {
     use ndarray::Array;
 
     #[test]
+    fn test_scaled_add() {
+        let mut v = Array::zeros(2);
+        v.scaled_add(1f32, &Array::ones(2));
+        assert_eq!(v, Array::ones(2));
+    }
+
+    #[test]
     fn test_to_from_bytes_f32() {
-        let a = WordVector::<f32> {
+        let a = WordVector {
             weights: Array::zeros(2),
             bias: 0f32,
             weights_gradsq: Array::zeros(2),
             bias_gradsq: 0f32,
         };
         let mut buf: [u8; 24] = [0; 24];
-        buf.copy_from_slice(&a.to_bytes());
-        assert_eq!(a, WordVector::<f32>::from_bytes(&buf).unwrap());
-    }
-
-    #[test]
-    fn test_to_from_bytes_f64() {
-        let a = WordVector::<f64> {
-            weights: Array1::<f64>::zeros(2),
-            bias: 0f64,
-            weights_gradsq: Array1::<f64>::zeros(2),
-            bias_gradsq: 0f64,
-        };
-        let mut buf: [u8; 48] = [0; 48];
-        buf.copy_from_slice(&a.to_bytes());
-        print!("{:?}", &buf[0..24]);
-        let b = WordVector::<f64>::from_bytes(&buf);
-        print!("{:?}", b);
-        assert_eq!(a, WordVector::<f64>::from_bytes(&buf).unwrap());
+        if let Ok(b) = a.to_bytes() {
+            buf.copy_from_slice(&b);
+            assert_eq!(a, WordVector::from_bytes(&buf).unwrap());
+        } else {
+            unreachable!();
+        }
     }
 
     #[test]
@@ -246,7 +185,7 @@ mod tests {
     fn test_sgd_with_non_zero_loss() {
         let sgd_params = SGDParams {
             alpha: 1f32,
-            x_max: 100f32,
+            x_max: 10f32,
             eta: 1f32,
             grad_clip_value: 100f32,
         };
@@ -257,15 +196,20 @@ mod tests {
             bias_gradsq: 0f32,
         };
         let mut context = WordVector {
-            weights: Array::zeros(2),
+            weights: Array::ones(2),
             bias: 0f32,
-            weights_gradsq: Array::zeros(2),
+            weights_gradsq: Array::ones(2),
             bias_gradsq: 0f32,
         };
-        let n = sgd_step(&mut focus, &mut context, 15.0, sgd_params);
+        let n = sgd_step(&mut focus, &mut context, 20.0, sgd_params);
 
         if let Some(x) = n {
-            assert!((x + 0.223).abs() < 1e-3);
+            print!("{}", x);
+            assert!((x + 0.4936).abs() < 1e-3);
+            assert_ne!(focus.weights, Array::ones(2));
+            assert_ne!(focus.weights_gradsq, Array::ones(2));
+            assert_ne!(context.weights, Array::ones(2));
+            assert_ne!(focus.weights_gradsq, Array::ones(2));
         } else {
             assert!(n.is_some());
         }

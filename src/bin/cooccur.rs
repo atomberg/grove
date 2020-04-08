@@ -1,5 +1,4 @@
 extern crate getopts;
-extern crate grove;
 
 #[macro_use]
 extern crate log;
@@ -27,7 +26,7 @@ struct Params {
 
 #[derive(PartialEq, PartialOrd, Eq, Ord)]
 struct HeapElement {
-    record: SparseRecord<f32>,
+    record: SparseRecord,
     file_id: usize,
 }
 
@@ -44,8 +43,8 @@ fn main() {
     info!("Read {} tokens into the vocabulary hash map", vocab.len());
     debug!("{:?}", vocab);
 
-    let mut bigram_table = CornerMatrix::<f32>::new(vocab.len(), params.max_product);
-    let mut overflow_buffer = Vec::<SparseRecord<f32>>::with_capacity(params.overflow_length);
+    let mut bigram_table = CornerMatrix::new(vocab.len(), params.max_product);
+    let mut overflow_buffer = Vec::<SparseRecord>::with_capacity(params.overflow_length);
 
     let mut reader = BufReader::new(io::stdin());
     let mut line = String::new();
@@ -83,8 +82,8 @@ fn main() {
                     *bigram_table.get(focus_rank, context_rank) += cooc;
                 } else {
                     overflow_buffer.push(SparseRecord {
-                        row: focus_rank as u32,
-                        col: context_rank as u32,
+                        row: focus_rank,
+                        col: context_rank,
                         val: cooc,
                     });
                 }
@@ -104,7 +103,11 @@ fn main() {
 
     let mut writer = BufWriter::new(io::stdout());
     for record in bigram_table.to_sparse() {
-        match writer.write_all(&record.to_bytes()) {
+        let bytes = match record.to_bytes() {
+            Ok(b) => b,
+            Err(e) => panic!("Could not serialize record: {}", e.to_string()),
+        };
+        match writer.write_all(&bytes) {
             Ok(n) => n,
             Err(e) => panic!("Could not write to stdout: {}", e.to_string()),
         };
@@ -182,7 +185,11 @@ fn merge_temp_files(tmp_files: Vec<String>, writer: &mut dyn Write) {
         if prev.record == cur.record {
             cur.record.val += prev.record.val;
         } else {
-            match writer.write_all(&prev.record.to_bytes()) {
+            let bytes = match prev.record.to_bytes() {
+                Ok(b) => b,
+                Err(e) => panic!("Could not serialize record: {}", e.to_string()),
+            };
+            match writer.write_all(&bytes) {
                 Ok(n) => n,
                 Err(e) => panic!("Could not write: {}", e.to_string()),
             };
@@ -202,7 +209,11 @@ fn merge_temp_files(tmp_files: Vec<String>, writer: &mut dyn Write) {
     }
 
     // Heap is empty now, but cur was not flushed to stdout yet
-    match writer.write_all(&cur.record.to_bytes()) {
+    let bytes = match cur.record.to_bytes() {
+        Ok(b) => b,
+        Err(e) => panic!("Could not serialize record: {}", e.to_string()),
+    };
+    match writer.write_all(&bytes) {
         Ok(n) => n,
         Err(e) => panic!("Could not write: {}", e.to_string()),
     };
@@ -226,7 +237,7 @@ fn read_vocab(vocab_filename: String) -> HashMap<String, usize, RandomXxHashBuil
     map
 }
 
-fn flush_overflow_buffer(overflow_buffer: &mut Vec<SparseRecord<f32>>, filename: String) {
+fn flush_overflow_buffer(overflow_buffer: &mut Vec<SparseRecord>, filename: String) {
     overflow_buffer.sort_unstable();
     let mut writer = BufWriter::new(match fs::File::create(filename.clone()) {
         Ok(file) => file,
@@ -242,7 +253,11 @@ fn flush_overflow_buffer(overflow_buffer: &mut Vec<SparseRecord<f32>>, filename:
         if cur_rec == *rec {
             cur_rec.val += rec.val
         } else {
-            match writer.write_all(&cur_rec.to_bytes()) {
+            let bytes = match cur_rec.to_bytes() {
+                Ok(b) => b,
+                Err(e) => panic!("Could not serialize record: {}", e.to_string()),
+            };
+            match writer.write_all(&bytes) {
                 Ok(n) => n,
                 Err(e) => panic!("Could write to {}: {}", filename, e.to_string()),
             };
@@ -253,7 +268,11 @@ fn flush_overflow_buffer(overflow_buffer: &mut Vec<SparseRecord<f32>>, filename:
             };
         }
     }
-    match writer.write_all(&cur_rec.to_bytes()) {
+    let bytes = match cur_rec.to_bytes() {
+        Ok(b) => b,
+        Err(e) => panic!("Could not serialize record: {}", e.to_string()),
+    };
+    match writer.write_all(&bytes) {
         Ok(n) => n,
         Err(e) => panic!("Could not write to {}: {}", filename, e.to_string()),
     };

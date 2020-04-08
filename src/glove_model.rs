@@ -3,12 +3,11 @@ extern crate num;
 extern crate rand;
 extern crate serde;
 
-use super::sparse::Serialize;
 use hogwild::{HogwildArray1, HogwildArray2};
 use ndarray::{Array1, Array2};
 use num::Float;
 use rand::{distributions::Uniform, Rng};
-use serde::{de::DeserializeOwned, Deserialize, Serialize as SerdeSerialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::fs;
 use std::io::{BufReader, BufWriter, Write};
 
@@ -18,15 +17,15 @@ pub enum ReadWriteError {
     DecodeError,
 }
 
-#[derive(Clone, Deserialize, SerdeSerialize)]
-struct ModelWeights<F: Float + Serialize> {
+#[derive(Clone, Deserialize, Serialize)]
+struct ModelWeights<F: Float> {
     focus_vectors: Array2<F>,
     focus_bias: Array1<F>,
     context_vector: Array2<F>,
     context_bias: Array1<F>,
 }
 
-impl<F: Float + Serialize + SerdeSerialize + DeserializeOwned> ModelWeights<F> {
+impl<F: Float + Serialize + DeserializeOwned> ModelWeights<F> {
     pub fn to_file(&self, path: &str) -> Result<(), ReadWriteError> {
         let bytes = match bincode::serialize(&self) {
             Ok(b) => b,
@@ -56,7 +55,7 @@ impl<F: Float + Serialize + SerdeSerialize + DeserializeOwned> ModelWeights<F> {
 
 // Unsafe arrays for Hogwild method of parallel Stochastic Gradient descent
 #[derive(Clone)]
-pub struct Model<F: Float + Serialize> {
+pub struct Model<F: Float> {
     pub focus_vectors: HogwildArray2<F>,
     pub focus_bias: HogwildArray1<F>,
     pub context_vector: HogwildArray2<F>,
@@ -67,7 +66,7 @@ pub struct Model<F: Float + Serialize> {
     pub grad_context_bias: HogwildArray1<F>,
 }
 
-impl<F: Float + Serialize + SerdeSerialize + DeserializeOwned> Model<F> {
+impl<F: Float + Serialize + DeserializeOwned> Model<F> {
     pub fn new(vocab_size: usize, vector_size: usize) -> Self {
         Model {
             focus_vectors: Array2::zeros((vocab_size, vector_size)).into(),
@@ -133,7 +132,7 @@ impl<F: Float + Serialize + SerdeSerialize + DeserializeOwned> Model<F> {
     }
 }
 
-impl<F: Float + Serialize> PartialEq for Model<F> {
+impl<F: Float> PartialEq for Model<F> {
     fn eq(&self, other: &Self) -> bool {
         self.focus_vectors.view() == other.focus_vectors.view()
             && self.focus_bias.view() == other.focus_bias.view()
@@ -146,7 +145,7 @@ impl<F: Float + Serialize> PartialEq for Model<F> {
     }
 }
 
-impl<F: Float + Serialize> Eq for Model<F> {}
+impl<F: Float> Eq for Model<F> {}
 
 impl Model<f64> {
     pub fn with_random_weights(vocab_size: usize, vector_size: usize) -> Self {

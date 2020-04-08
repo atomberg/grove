@@ -9,14 +9,17 @@ pub struct Records<B> {
 }
 
 impl<B: io::BufRead> Iterator for Records<B> {
-    type Item = io::Result<SparseRecord<f32>>;
+    type Item = io::Result<SparseRecord>;
 
-    fn next(&mut self) -> Option<io::Result<SparseRecord<f32>>> {
+    fn next(&mut self) -> Option<io::Result<SparseRecord>> {
         match self.reader.read_exact(&mut self.buffer) {
-            Ok(()) => match SparseRecord::from_bytes(&self.buffer) {
-                Some(record) => Some(Ok(record)),
-                None => None,
-            },
+            Ok(()) => {
+                let record: bincode::Result<SparseRecord> = bincode::deserialize(&self.buffer);
+                match record {
+                    Ok(record) => Some(Ok(record)),
+                    Err(e) => None,
+                }
+            }
             Err(e) => Some(Err(e)),
         }
     }
@@ -35,7 +38,9 @@ mod tests {
                 col: i,
                 val: i as f32,
             };
-            bytes.extend(rec.to_bytes());
+            if let Ok(b) = rec.to_bytes() {
+                bytes.extend(b);
+            }
         }
         let cur = io::Cursor::new(bytes);
         let mut records = Records {

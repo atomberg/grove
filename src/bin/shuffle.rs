@@ -21,7 +21,7 @@ fn main() {
     let params = parse_args();
     info!("Starting to shuffle with array_size={}", params.array_size);
 
-    let mut shuffling_buffer = Vec::<SparseRecord<f32>>::with_capacity(params.array_size + 1);
+    let mut shuffling_buffer = Vec::<SparseRecord>::with_capacity(params.array_size + 1);
     let mut reader = Records {
         buffer: [0; 12],
         filename: "stdin".to_string(),
@@ -50,7 +50,11 @@ fn main() {
             break;
         }
         let record = shuffling_buffer.swap_remove(i);
-        match writer.write_all(&record.to_bytes()) {
+        let bytes = match record.to_bytes() {
+            Ok(b) => b,
+            Err(e) => panic!("Could not serialize record: {}", e.to_string()),
+        };
+        match writer.write_all(&bytes) {
             Ok(n) => n,
             Err(e) => panic!("Could not write: {}", e.to_string()),
         };
