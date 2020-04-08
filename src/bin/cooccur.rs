@@ -103,7 +103,7 @@ fn main() {
 
     let mut writer = BufWriter::new(io::stdout());
     for record in bigram_table.to_sparse() {
-        let bytes = match record.to_bytes() {
+        let bytes = match bincode::serialize(&record) {
             Ok(b) => b,
             Err(e) => panic!("Could not serialize record: {}", e.to_string()),
         };
@@ -185,7 +185,7 @@ fn merge_temp_files(tmp_files: Vec<String>, writer: &mut dyn Write) {
         if prev.record == cur.record {
             cur.record.val += prev.record.val;
         } else {
-            let bytes = match prev.record.to_bytes() {
+            let bytes = match bincode::serialize(&prev.record) {
                 Ok(b) => b,
                 Err(e) => panic!("Could not serialize record: {}", e.to_string()),
             };
@@ -209,7 +209,7 @@ fn merge_temp_files(tmp_files: Vec<String>, writer: &mut dyn Write) {
     }
 
     // Heap is empty now, but cur was not flushed to stdout yet
-    let bytes = match cur.record.to_bytes() {
+    let bytes = match bincode::serialize(&cur.record) {
         Ok(b) => b,
         Err(e) => panic!("Could not serialize record: {}", e.to_string()),
     };
@@ -253,7 +253,7 @@ fn flush_overflow_buffer(overflow_buffer: &mut Vec<SparseRecord>, filename: Stri
         if cur_rec == *rec {
             cur_rec.val += rec.val
         } else {
-            let bytes = match cur_rec.to_bytes() {
+            let bytes = match bincode::serialize(&cur_rec) {
                 Ok(b) => b,
                 Err(e) => panic!("Could not serialize record: {}", e.to_string()),
             };
@@ -268,7 +268,7 @@ fn flush_overflow_buffer(overflow_buffer: &mut Vec<SparseRecord>, filename: Stri
             };
         }
     }
-    let bytes = match cur_rec.to_bytes() {
+    let bytes = match bincode::serialize(&cur_rec) {
         Ok(b) => b,
         Err(e) => panic!("Could not serialize record: {}", e.to_string()),
     };

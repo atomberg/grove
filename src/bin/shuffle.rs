@@ -1,6 +1,5 @@
 #[macro_use]
 extern crate log;
-extern crate rand;
 
 use env_logger;
 use getopts::Options;
@@ -50,7 +49,7 @@ fn main() {
             break;
         }
         let record = shuffling_buffer.swap_remove(i);
-        let bytes = match record.to_bytes() {
+        let bytes = match bincode::serialize(&record) {
             Ok(b) => b,
             Err(e) => panic!("Could not serialize record: {}", e.to_string()),
         };

@@ -1,6 +1,5 @@
-use std::io;
-
 use super::sparse::SparseRecord;
+use std::io;
 
 pub struct Records<B> {
     pub filename: String,
@@ -38,7 +37,7 @@ mod tests {
                 col: i,
                 val: i as f32,
             };
-            if let Ok(b) = rec.to_bytes() {
+            if let Ok(b) = bincode::serialize(&rec) {
                 bytes.extend(b);
             }
         }

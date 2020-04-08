@@ -1,8 +1,3 @@
-extern crate bincode;
-extern crate num;
-extern crate rand;
-extern crate serde;
-
 use hogwild::{HogwildArray1, HogwildArray2};
 use ndarray::{Array1, Array2};
 use num::Float;

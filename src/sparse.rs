@@ -1,6 +1,3 @@
-extern crate num;
-
-use bincode::{deserialize, serialize, Result};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::cmp::{max, min};
@@ -11,16 +8,6 @@ pub struct SparseRecord {
     pub row: usize,
     pub col: usize,
     pub val: f32,
-}
-
-impl SparseRecord {
-    pub fn to_bytes(&self) -> Result<Vec<u8>> {
-        serialize(&self)
-    }
-
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        deserialize(bytes)
-    }
 }
 
 impl PartialEq for SparseRecord {
@@ -181,9 +168,10 @@ mod tests {
             val: 3.0 as f32,
         };
         let mut buf: [u8; 12] = [0; 12];
-        if let Ok(b) = a.to_bytes() {
+        if let Ok(b) = bincode::serialize(&a) {
             buf.copy_from_slice(&b);
-            assert_eq!(a, SparseRecord::from_bytes(&buf).unwrap());
+            let c: SparseRecord = bincode::deserialize(&buf).unwrap();
+            assert_eq!(a, c);
         } else {
             unreachable!();
         }

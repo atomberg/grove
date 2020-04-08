@@ -1,8 +1,3 @@
-extern crate bincode;
-extern crate num;
-extern crate rand;
-extern crate serde;
-
 use ndarray::{arr1, Array1};
 use rand::{distributions::Uniform, Rng};
 use serde::{Deserialize, Serialize as SerdeSerialize};
@@ -31,14 +26,6 @@ impl WordVector {
             weights_gradsq: Array1::ones(vector_size),
             bias_gradsq: 1f32,
         }
-    }
-
-    pub fn to_bytes(&self) -> bincode::Result<Vec<u8>> {
-        bincode::serialize(&self)
-    }
-
-    pub fn from_bytes(bytes: &[u8]) -> bincode::Result<Self> {
-        bincode::deserialize(bytes)
     }
 }
 
@@ -144,9 +131,10 @@ mod tests {
             bias_gradsq: 0f32,
         };
         let mut buf: [u8; 24] = [0; 24];
-        if let Ok(b) = a.to_bytes() {
+        if let Ok(b) = bincode::serialize(&a) {
             buf.copy_from_slice(&b);
-            assert_eq!(a, WordVector::from_bytes(&buf).unwrap());
+            let c: WordVector = bincode::deserialize(&buf).unwrap();
+            assert_eq!(a, c);
         } else {
             unreachable!();
         }
