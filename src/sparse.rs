@@ -161,13 +161,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_to_from_bytes_f32() {
+    fn test_serialization() {
         let a = SparseRecord {
             row: 1,
             col: 2,
             val: 3.0 as f32,
         };
-        let mut buf: [u8; 12] = [0; 12];
+        let mut buf: [u8; 20] = [0; 20];
         if let Ok(b) = bincode::serialize(&a) {
             buf.copy_from_slice(&b);
             let c: SparseRecord = bincode::deserialize(&buf).unwrap();

@@ -22,24 +22,27 @@ fn main() {
 
     let mut shuffling_buffer = Vec::<SparseRecord>::with_capacity(params.array_size + 1);
     let mut reader = Records {
-        buffer: [0; 12],
+        buffer: [0; 20],
         filename: "stdin".to_string(),
         reader: BufReader::new(io::stdin()),
     };
 
     // Fill the buffer
+    let mut counter = 0;
     for _ in 0..params.array_size {
         if let Some(result) = reader.next() {
             if let Ok(record) = result {
+                counter += 1;
                 shuffling_buffer.push(record);
             }
         }
     }
-    info!("Filled the buffer, shuffling now");
+    info!("Filled the buffer with {} records, shuffling now", counter);
     shuffling_buffer.shuffle(&mut thread_rng());
 
     info!("Buffer shuffled, let's go!");
     let mut writer = BufWriter::new(io::stdout());
+    counter = 0;
     for next in reader {
         let i = 0; // rng.gen_range(0, shuffling_buffer.len());
         if let Ok(record) = next {
@@ -54,10 +57,14 @@ fn main() {
             Err(e) => panic!("Could not serialize record: {}", e.to_string()),
         };
         match writer.write_all(&bytes) {
-            Ok(n) => n,
+            Ok(n) => {
+                counter += 1;
+                n
+            }
             Err(e) => panic!("Could not write: {}", e.to_string()),
         };
     }
+    info!("Wrote out {} records.", counter);
 }
 
 fn parse_args() -> Params {

@@ -125,7 +125,7 @@ fn merge_temp_files(tmp_files: Vec<String>, writer: &mut dyn Write) {
     let mut file_readers: Vec<Records<std::io::BufReader<std::fs::File>>> = Vec::with_capacity(tmp_files.len());
     for (file_id, file) in tmp_files.iter().enumerate() {
         let mut reader = Records {
-            buffer: [0; 12],
+            buffer: [0; 20],
             filename: file.to_string(),
             reader: BufReader::new(match fs::File::open(&file) {
                 Ok(file) => file,

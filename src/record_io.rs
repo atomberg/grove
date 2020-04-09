@@ -3,7 +3,7 @@ use std::io;
 
 pub struct Records<B> {
     pub filename: String,
-    pub buffer: [u8; 12],
+    pub buffer: [u8; 20],
     pub reader: B,
 }
 
@@ -44,7 +44,7 @@ mod tests {
         let cur = io::Cursor::new(bytes);
         let mut records = Records {
             filename: "memory".to_string(),
-            buffer: [0; 12],
+            buffer: [0; 20],
             reader: cur,
         };
         for i in 1..5 {
@@ -53,10 +53,11 @@ mod tests {
                 col: i,
                 val: i as f32,
             };
-            if let Some(record) = records.next() {
-                if let Ok(record) = record {
-                    assert_eq!(record, rec);
-                }
+            let n = records.next();
+            assert!(n.is_some());
+            if let Some(m) = n {
+                assert!(m.is_ok());
+                assert_eq!(m.unwrap(), rec);
             }
         }
     }

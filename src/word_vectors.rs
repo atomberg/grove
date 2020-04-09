@@ -123,14 +123,14 @@ mod tests {
     }
 
     #[test]
-    fn test_to_from_bytes_f32() {
+    fn test_serialization() {
         let a = WordVector {
             weights: Array::zeros(2),
             bias: 0f32,
             weights_gradsq: Array::zeros(2),
             bias_gradsq: 0f32,
         };
-        let mut buf: [u8; 24] = [0; 24];
+        let mut buf: [u8; 58] = [0; 58];
         if let Ok(b) = bincode::serialize(&a) {
             buf.copy_from_slice(&b);
             let c: WordVector = bincode::deserialize(&buf).unwrap();
