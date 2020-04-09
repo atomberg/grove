@@ -1,11 +1,11 @@
 use hogwild::{HogwildArray1, HogwildArray2};
 use ndarray::{Array1, Array2};
-use num::Float;
 use rand::{distributions::Uniform, Rng};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::fs;
 use std::io::{BufReader, BufWriter, Write};
 
+#[derive(Debug)]
 pub enum ReadWriteError {
     IoError(std::io::Error),
     EncodeError,
@@ -13,14 +13,14 @@ pub enum ReadWriteError {
 }
 
 #[derive(Clone, Deserialize, Serialize)]
-struct ModelWeights<F: Float> {
-    focus_vectors: Array2<F>,
-    focus_bias: Array1<F>,
-    context_vector: Array2<F>,
-    context_bias: Array1<F>,
+struct ModelWeights {
+    focus_vectors: Array2<f32>,
+    focus_bias: Array1<f32>,
+    context_vector: Array2<f32>,
+    context_bias: Array1<f32>,
 }
 
-impl<F: Float + Serialize + DeserializeOwned> ModelWeights<F> {
+impl ModelWeights {
     pub fn to_file(&self, path: &str) -> Result<(), ReadWriteError> {
         let bytes = match bincode::serialize(&self) {
             Ok(b) => b,
@@ -50,18 +50,18 @@ impl<F: Float + Serialize + DeserializeOwned> ModelWeights<F> {
 
 // Unsafe arrays for Hogwild method of parallel Stochastic Gradient descent
 #[derive(Clone)]
-pub struct Model<F: Float> {
-    pub focus_vectors: HogwildArray2<F>,
-    pub focus_bias: HogwildArray1<F>,
-    pub context_vector: HogwildArray2<F>,
-    pub context_bias: HogwildArray1<F>,
-    pub grad_focus_vectors: HogwildArray2<F>,
-    pub grad_focus_bias: HogwildArray1<F>,
-    pub grad_context_vector: HogwildArray2<F>,
-    pub grad_context_bias: HogwildArray1<F>,
+pub struct Model {
+    pub focus_vectors: HogwildArray2<f32>,
+    pub focus_bias: HogwildArray1<f32>,
+    pub context_vector: HogwildArray2<f32>,
+    pub context_bias: HogwildArray1<f32>,
+    pub grad_focus_vectors: HogwildArray2<f32>,
+    pub grad_focus_bias: HogwildArray1<f32>,
+    pub grad_context_vector: HogwildArray2<f32>,
+    pub grad_context_bias: HogwildArray1<f32>,
 }
 
-impl<F: Float + Serialize + DeserializeOwned> Model<F> {
+impl Model {
     pub fn new(vocab_size: usize, vector_size: usize) -> Self {
         Model {
             focus_vectors: Array2::zeros((vocab_size, vector_size)).into(),
@@ -73,6 +73,43 @@ impl<F: Float + Serialize + DeserializeOwned> Model<F> {
             grad_focus_bias: Array1::zeros(vocab_size).into(),
             grad_context_vector: Array2::zeros((vocab_size, vector_size)).into(),
             grad_context_bias: Array1::zeros(vocab_size).into(),
+        }
+    }
+
+    pub fn with_random_weights(vocab_size: usize, vector_size: usize) -> Self {
+        let shape = (vocab_size, vector_size);
+        let n = vocab_size * vector_size;
+        let bound = 0.5 / (vector_size + 1) as f32;
+        let mut rng_iter = rand::thread_rng().sample_iter(Uniform::new(-bound, bound));
+        let focus_vectors = match Array2::from_shape_vec(shape, rng_iter.take(n).collect()) {
+            Ok(v) => v,
+            Err(e) => panic!("Could not randomly initialize the focus vectors: {}", e.to_string()),
+        };
+        rng_iter = rand::thread_rng().sample_iter(Uniform::new(-bound, bound));
+        let context_vector = match Array2::from_shape_vec(shape, rng_iter.take(n).collect()) {
+            Ok(v) => v,
+            Err(e) => panic!("Could not randomly initialize the context vectors: {}", e.to_string()),
+        };
+        rng_iter = rand::thread_rng().sample_iter(Uniform::new(-bound, bound));
+        let focus_bias = match Array1::from_shape_vec(vocab_size, rng_iter.take(vocab_size).collect()) {
+            Ok(v) => v,
+            Err(e) => panic!("Could not randomly initialize the focus biases: {}", e.to_string()),
+        };
+        rng_iter = rand::thread_rng().sample_iter(Uniform::new(-bound, bound));
+        let context_bias = match Array1::from_shape_vec(vocab_size, rng_iter.take(vocab_size).collect()) {
+            Ok(v) => v,
+            Err(e) => panic!("Could not randomly initialize the context biases: {}", e.to_string()),
+        };
+        Model {
+            focus_vectors: focus_vectors.into(),
+            focus_bias: focus_bias.into(),
+            context_vector: context_vector.into(),
+            context_bias: context_bias.into(),
+
+            grad_focus_vectors: Array2::ones((vocab_size, vector_size)).into(),
+            grad_focus_bias: Array1::ones(vocab_size).into(),
+            grad_context_vector: Array2::ones((vocab_size, vector_size)).into(),
+            grad_context_bias: Array1::ones(vocab_size).into(),
         }
     }
 
@@ -127,7 +164,7 @@ impl<F: Float + Serialize + DeserializeOwned> Model<F> {
     }
 }
 
-impl<F: Float> PartialEq for Model<F> {
+impl PartialEq for Model {
     fn eq(&self, other: &Self) -> bool {
         self.focus_vectors.view() == other.focus_vectors.view()
             && self.focus_bias.view() == other.focus_bias.view()
@@ -140,82 +177,4 @@ impl<F: Float> PartialEq for Model<F> {
     }
 }
 
-impl<F: Float> Eq for Model<F> {}
-
-impl Model<f64> {
-    pub fn with_random_weights(vocab_size: usize, vector_size: usize) -> Self {
-        let shape = (vocab_size, vector_size);
-        let n = vocab_size * vector_size;
-        let bound = 0.5 / (vector_size + 1) as f64;
-        let mut rng_iter = rand::thread_rng().sample_iter(Uniform::new(-bound, bound));
-        let focus_vectors = match Array2::from_shape_vec(shape, rng_iter.take(n).collect()) {
-            Ok(v) => v,
-            Err(e) => panic!("Could not randomly initialize the focus vectors: {}", e.to_string()),
-        };
-        rng_iter = rand::thread_rng().sample_iter(Uniform::new(-bound, bound));
-        let context_vector = match Array2::from_shape_vec(shape, rng_iter.take(n).collect()) {
-            Ok(v) => v,
-            Err(e) => panic!("Could not randomly initialize the context vectors: {}", e.to_string()),
-        };
-        rng_iter = rand::thread_rng().sample_iter(Uniform::new(-bound, bound));
-        let focus_bias = match Array1::from_shape_vec(vocab_size, rng_iter.take(vocab_size).collect()) {
-            Ok(v) => v,
-            Err(e) => panic!("Could not randomly initialize the focus biases: {}", e.to_string()),
-        };
-        rng_iter = rand::thread_rng().sample_iter(Uniform::new(-bound, bound));
-        let context_bias = match Array1::from_shape_vec(vocab_size, rng_iter.take(vocab_size).collect()) {
-            Ok(v) => v,
-            Err(e) => panic!("Could not randomly initialize the context biases: {}", e.to_string()),
-        };
-        Model {
-            focus_vectors: focus_vectors.into(),
-            focus_bias: focus_bias.into(),
-            context_vector: context_vector.into(),
-            context_bias: context_bias.into(),
-
-            grad_focus_vectors: Array2::ones((vocab_size, vector_size)).into(),
-            grad_focus_bias: Array1::ones(vocab_size).into(),
-            grad_context_vector: Array2::ones((vocab_size, vector_size)).into(),
-            grad_context_bias: Array1::ones(vocab_size).into(),
-        }
-    }
-}
-
-impl Model<f32> {
-    pub fn with_random_weights(vocab_size: usize, vector_size: usize) -> Self {
-        let shape = (vocab_size, vector_size);
-        let n = vocab_size * vector_size;
-        let bound = 0.5 / (vector_size + 1) as f32;
-        let mut rng_iter = rand::thread_rng().sample_iter(Uniform::new(-bound, bound));
-        let focus_vectors = match Array2::from_shape_vec(shape, rng_iter.take(n).collect()) {
-            Ok(v) => v,
-            Err(e) => panic!("Could not randomly initialize the focus vectors: {}", e.to_string()),
-        };
-        rng_iter = rand::thread_rng().sample_iter(Uniform::new(-bound, bound));
-        let context_vector = match Array2::from_shape_vec(shape, rng_iter.take(n).collect()) {
-            Ok(v) => v,
-            Err(e) => panic!("Could not randomly initialize the context vectors: {}", e.to_string()),
-        };
-        rng_iter = rand::thread_rng().sample_iter(Uniform::new(-bound, bound));
-        let focus_bias = match Array1::from_shape_vec(vocab_size, rng_iter.take(vocab_size).collect()) {
-            Ok(v) => v,
-            Err(e) => panic!("Could not randomly initialize the focus biases: {}", e.to_string()),
-        };
-        rng_iter = rand::thread_rng().sample_iter(Uniform::new(-bound, bound));
-        let context_bias = match Array1::from_shape_vec(vocab_size, rng_iter.take(vocab_size).collect()) {
-            Ok(v) => v,
-            Err(e) => panic!("Could not randomly initialize the context biases: {}", e.to_string()),
-        };
-        Model {
-            focus_vectors: focus_vectors.into(),
-            focus_bias: focus_bias.into(),
-            context_vector: context_vector.into(),
-            context_bias: context_bias.into(),
-
-            grad_focus_vectors: Array2::ones((vocab_size, vector_size)).into(),
-            grad_focus_bias: Array1::ones(vocab_size).into(),
-            grad_context_vector: Array2::ones((vocab_size, vector_size)).into(),
-            grad_context_bias: Array1::ones(vocab_size).into(),
-        }
-    }
-}
+impl Eq for Model {}
