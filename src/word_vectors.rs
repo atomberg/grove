@@ -48,7 +48,7 @@ impl WordVector {
         let weights: Vec<f32> = rng.sample_iter(between).take(vector_size).collect();
         WordVector {
             weights: arr1(&weights),
-            bias: 0f32,
+            bias: rng.sample_iter(between).next().unwrap(),
             weights_gradsq: Array1::ones(vector_size),
             bias_gradsq: 1f32,
         }
@@ -173,23 +173,15 @@ mod tests {
     fn test_sgd_with_non_zero_loss() {
         let sgd_params = SGDParams {
             alpha: 1f32,
-            x_max: 10f32,
+            x_max: 1f32,
             eta: 1f32,
             grad_clip_value: 100f32,
         };
-        let mut focus = WordVector {
-            weights: Array::ones(2),
-            bias: 0f32,
-            weights_gradsq: Array::ones(2),
-            bias_gradsq: 0f32,
-        };
-        let mut context = WordVector {
-            weights: Array::ones(2),
-            bias: 0f32,
-            weights_gradsq: Array::ones(2),
-            bias_gradsq: 0f32,
-        };
-        let n = sgd_step(&mut focus, &mut context, 20.0, sgd_params);
+        let focus = WordVector::with_random_weights(2);
+        let context = WordVector::with_random_weights(2);
+        let mut focus_1 = focus.clone();
+        let mut context_1 = context.clone();
+        let n = sgd_step(&mut focus_1, &mut context_1, 1.0, sgd_params);
 
         if let Some(x) = n {
             print!("{}", x);
