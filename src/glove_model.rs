@@ -24,7 +24,7 @@ impl ModelWeights {
     pub fn to_file(&self, path: &str) -> Result<(), ReadWriteError> {
         let bytes = match bincode::serialize(&self) {
             Ok(b) => b,
-            Err(e) => return Err(ReadWriteError::EncodeError),
+            Err(_e) => return Err(ReadWriteError::EncodeError),
         };
         let mut fout = BufWriter::new(match fs::File::create(path) {
             Ok(fout) => fout,
@@ -43,7 +43,7 @@ impl ModelWeights {
         });
         match bincode::deserialize_from(fin) {
             Ok(x) => Ok(x),
-            Err(e) => Err(ReadWriteError::DecodeError),
+            Err(_e) => Err(ReadWriteError::DecodeError),
         }
     }
 }

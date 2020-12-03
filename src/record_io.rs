@@ -16,7 +16,7 @@ impl<B: io::BufRead> Iterator for Records<B> {
                 let record: bincode::Result<SparseRecord> = bincode::deserialize(&self.buffer);
                 match record {
                     Ok(record) => Some(Ok(record)),
-                    Err(e) => None,
+                    Err(_e) => None,
                 }
             }
             Err(e) => Some(Err(e)),
