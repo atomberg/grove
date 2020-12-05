@@ -1,12 +1,13 @@
 use ndarray::{arr1, Array1};
 use rand::{distributions::Uniform, Rng};
 use serde::{Deserialize, Serialize as SerdeSerialize};
+use std::fmt;
 
 #[derive(Debug, Clone)]
 pub struct SGDParams {
     pub alpha: f32,
     pub x_max: f32,
-    pub eta: f32,
+    pub learning_rate: f32,
     pub grad_clip_value: f32,
 }
 
@@ -26,6 +27,19 @@ impl WordVector {
             weights_gradsq: Array1::ones(vector_size),
             bias_gradsq: 1f32,
         }
+    }
+}
+
+impl fmt::Display for WordVector {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "<V = {} + {}, ∇²V = {} + {}>",
+            self.weights.to_string(),
+            self.bias,
+            self.weights_gradsq.to_string(),
+            self.bias_gradsq
+        )
     }
 }
 
@@ -62,39 +76,39 @@ pub fn sgd_step(
     sgd_params: SGDParams,
 ) -> Option<f32> {
     let diff = focus.weights.dot(&context.weights) + focus.bias + context.bias - target_value.ln();
-    let mut fdiff: f32 = if target_value > sgd_params.x_max {
+    let fdiff = if target_value > sgd_params.x_max {
         diff
     } else {
         (target_value / sgd_params.x_max).powf(sgd_params.alpha) * diff
     };
+    let cost = 0.5 * fdiff * diff; // weighted squared error for this step
+
     if !diff.is_finite() || !fdiff.is_finite() {
         return None;
     }
 
-    let mut focus_update = context.weights.map(|v| {
+    let focus_update = context.weights.map(|v| {
         (fdiff * v)
             .max(-sgd_params.grad_clip_value)
             .min(sgd_params.grad_clip_value)
+            * sgd_params.learning_rate
     });
-    let mut context_update = focus.weights.map(|v| {
+    let context_update = focus.weights.map(|v| {
         (fdiff * v)
             .max(-sgd_params.grad_clip_value)
             .min(sgd_params.grad_clip_value)
+            * sgd_params.learning_rate
     });
 
-    focus
-        .weights_gradsq
-        .scaled_add(sgd_params.eta, &(focus_update.map(|v| v * v)));
-    context
-        .weights_gradsq
-        .scaled_add(sgd_params.eta, &(context_update.map(|v| v * v)));
+    let focus_adapt_update = &focus_update / &focus.weights_gradsq.mapv(f32::sqrt);
+    let context_adapt_update = &context_update / &context.weights_gradsq.mapv(f32::sqrt);
 
-    focus_update = focus_update / focus.weights_gradsq.mapv(f32::sqrt);
-    context_update = context_update / context.weights_gradsq.mapv(f32::sqrt);
+    focus.weights_gradsq += &(&focus_update * &focus_update);
+    context.weights_gradsq += &(&context_update * &context_update);
 
-    if focus_update.sum().is_finite() && context_update.sum().is_finite() {
-        focus.weights.scaled_add(-sgd_params.eta, &focus_update);
-        context.weights.scaled_add(-sgd_params.eta, &context_update);
+    if focus_adapt_update.sum().is_finite() && context_adapt_update.sum().is_finite() {
+        focus.weights -= &focus_adapt_update;
+        context.weights -= &context_adapt_update;
     }
 
     if (fdiff / focus.bias_gradsq.sqrt()).is_finite() {
@@ -103,11 +117,10 @@ pub fn sgd_step(
     if (fdiff / context.bias_gradsq.sqrt()).is_finite() {
         context.bias -= fdiff / context.bias_gradsq.sqrt();
     }
-    fdiff *= fdiff;
-    focus.bias_gradsq += fdiff;
-    context.bias_gradsq += fdiff;
+    focus.bias_gradsq += fdiff * fdiff;
+    context.bias_gradsq += fdiff * fdiff;
 
-    Some(0.5 * fdiff * diff) // weighted squared error for this step
+    Some(cost)
 }
 
 #[cfg(test)]
@@ -145,7 +158,7 @@ mod tests {
         let sgd_params = SGDParams {
             alpha: 1f32,
             x_max: 100f32,
-            eta: 1f32,
+            learning_rate: 1f32,
             grad_clip_value: 100f32,
         };
         let mut focus = WordVector {
@@ -174,22 +187,35 @@ mod tests {
         let sgd_params = SGDParams {
             alpha: 1f32,
             x_max: 1f32,
-            eta: 1f32,
+            learning_rate: 1f32,
             grad_clip_value: 100f32,
         };
-        let focus = WordVector::with_random_weights(2);
-        let context = WordVector::with_random_weights(2);
-        let mut focus_1 = focus.clone();
-        let mut context_1 = context.clone();
-        let n = sgd_step(&mut focus_1, &mut context_1, 1.0, sgd_params);
+        let mut focus = WordVector {
+            weights: Array::ones(2),
+            bias: 1f32,
+            weights_gradsq: Array::ones(2),
+            bias_gradsq: 0f32,
+        }; //<V = [1, 1] + 1, ∇V = [1, 1] + 0>
+        let mut context = WordVector {
+            weights: Array::from_elem(2, 0.7),
+            bias: 1f32,
+            weights_gradsq: Array::ones(2),
+            bias_gradsq: 0f32,
+        }; // <V = [0.7, 0.7] + 1, ∇V = [1, 1] + 0>
+        let n = sgd_step(&mut focus, &mut context, 10.0, sgd_params);
 
         if let Some(x) = n {
-            print!("{}", x);
-            assert!((x + 0.4936).abs() < 1e-3);
-            assert_ne!(focus.weights, Array::ones(2));
-            assert_ne!(focus.weights_gradsq, Array::ones(2));
-            assert_ne!(context.weights, Array::ones(2));
-            assert_ne!(focus.weights_gradsq, Array::ones(2));
+            // By an independent calculation, for these 2 vectors, we have:
+            // diff=1.097, fdiff=1.097, cost=0.6022
+            // w_upd_focus = -0.768, w_upd_context = -1.097
+            // grad_upd_focus = 0.590, grad_upd_context = 1.204
+            assert!((x - 0.5 * 1.097 * 1.097).abs() < 1e-3); // diff = fdiff = 1.097 here
+            assert!(focus.weights.all_close(&Array::from_elem(2, 1.0 - 0.768), 1e-3));
+            assert!(focus.weights_gradsq.all_close(&Array::from_elem(2, 1.590), 1e-3));
+            assert!(context.weights.all_close(&Array::from_elem(2, 0.7 - 1.097), 1e-3));
+            assert!(context
+                .weights_gradsq
+                .all_close(&Array::from_elem(2, 2.204), 1e-3));
         } else {
             assert!(n.is_some());
         }
