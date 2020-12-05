@@ -4,13 +4,14 @@ extern crate rand;
 
 use env_logger;
 use getopts::Options;
-use ndarray::Axis;
 use std::env;
+use std::fmt;
 use std::fs;
-use std::io::{BufRead, BufReader, Seek, SeekFrom};
+use std::io::{BufRead, BufReader};
 
-use grove::word_vectors::{sgd_step, SGDParams, WordVector};
-use grove::{glove_model::Model, record_io::Records};
+use grove::glove_model::Model;
+use grove::glove_train::{train_epoch, TrainParams};
+use grove::word_vectors::SGDParams;
 
 struct Params {
     vector_size: usize,
@@ -27,16 +28,48 @@ struct Params {
 }
 
 #[allow(clippy::enum_variant_names)]
+#[derive(Debug)]
 enum WordVectorOutput {
     BothVectorsSeparatelyWithBiasTerms,
     BothVectorsSeparatelyNoBiasTerms,
     AddlVectorsExcludeBiasTerms,
 }
 
+impl fmt::Display for WordVectorOutput {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            WordVectorOutput::BothVectorsSeparatelyWithBiasTerms => write!(
+                f,
+                "output all data, for both word and context word vectors, including bias terms"
+            ),
+            WordVectorOutput::BothVectorsSeparatelyNoBiasTerms => {
+                write!(f, "output word vectors, excluding bias terms")
+            }
+            WordVectorOutput::AddlVectorsExcludeBiasTerms => {
+                write!(
+                    f,
+                    "output word vectors + context word vectors, excluding bias terms"
+                )
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
 enum SaveVectorsFormat {
     Binary,
     Text(WordVectorOutput),
     Both(WordVectorOutput),
+}
+
+impl fmt::Display for SaveVectorsFormat {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            SaveVectorsFormat::Binary => write!(f, "binary"),
+            SaveVectorsFormat::Text(_) => write!(f, "text"),
+            SaveVectorsFormat::Both(_) => write!(f, "both"),
+        }
+    }
 }
 
 fn main() {
@@ -55,234 +88,32 @@ fn main() {
     };
     if let Some(n_lines) = params.n_lines {
         info!("Read {} lines.", n_lines);
+        let tparams = TrainParams {
+            n_epochs: params.n_iter,
+            n_lines,
+            n_threads: params.n_threads,
+            input_file: params.input_file.clone(),
+        };
+        let model = Model::with_random_weights(vocab_size, params.vector_size);
+        model.weights_to_file("weights_0.mpk").unwrap();
+        model.gradients_to_file("grads_0.mpk").unwrap();
+        let model = match Model::from_file("weights_0.mpk", Some("grads_0.mpk")) {
+            Ok(m) => m,
+            Err(e) => panic!("{:?}", e),
+        };
+        train_loop(&model, tparams.clone(), params.sgd.clone());
     }
-
-    let model = Model::with_random_weights(vocab_size, params.vector_size);
-    model.weights_to_file("weights_0.mpk").unwrap();
-    model.gradients_to_file("grads_0.mpk").unwrap();
-    let model = match Model::from_file("weights_0.mpk", Some("grads_0.mpk")) {
-        Ok(m) => m,
-        Err(e) => panic!("{:?}", e),
-    };
-    // train_step(&model, &params);
-    glove_thread(model, params.sgd.clone(), params.input_file, 0, 1000);
 }
 
-fn train_step(model: &Model, params: &Params) {
+fn train_loop(model: &Model, train: TrainParams, sgd: SGDParams) {
     info!("Starting to train GloVe");
 
-    let n_lines = match params.n_lines {
-        Some(s) => s,
-        None => unreachable!(),
-    };
-
-    // let output_file: String;
-    // if nb_iter <= 0 {
-    //     output_file = format!("{}.bin", params.save_file);
-    // } else {
-    //     output_file = format!("{}.{:>03}.bin", params.save_file, nb_iter);
-    // }
-    info!("Initialized the weights");
-    for i in 0..params.n_iter {
-        let threads: Vec<_> = (0..params.n_threads)
-            .map(|j| {
-                let start = n_lines / params.n_threads * j;
-                let end = if j != params.n_threads - 1 {
-                    n_lines / params.n_threads * (j + 1)
-                } else {
-                    n_lines
-                };
-                let model = model.clone();
-                let path = params.input_file.clone();
-                let params = params.sgd.clone();
-                std::thread::spawn(move || glove_thread(model, params, path, start, end))
-            })
-            .collect();
-        let total_cost = threads
-            .into_iter()
-            .map(|t| match t.join() {
-                Ok(c) => c,
-                Err(e) => panic!("{:?}", e),
-            })
-            .fold(0.0, |a, b| a + b);
-        info!("iter: {:>03}, cost: {}", i + 1, total_cost / n_lines as f32);
+    // info!("Initialized the weights");
+    for i in 0..train.n_epochs {
+        let cost = train_epoch(model, train.clone(), sgd.clone());
+        info!("iter: {:>03}, cost: {}", i + 1, cost / train.n_lines as f32);
     }
 }
-
-fn glove_thread(mut model: Model, sgd_params: SGDParams, input_file: String, start: usize, end: usize) -> f32 {
-    let mut cost = 0f32;
-    let mut example_counter: usize = start;
-    let reader = match fs::File::open(input_file.clone()) {
-        Ok(mut file_in) => match file_in.seek(SeekFrom::Start((start * 20) as u64)) {
-            Ok(_) => Records {
-                buffer: [0; 20],
-                filename: input_file,
-                reader: BufReader::new(file_in),
-            },
-            Err(e) => panic!("Could seek to position {}: {}", start * 20, e.to_string()),
-        },
-        Err(e) => panic!("Could open the file: {}", e.to_string()),
-    };
-
-    for next in reader {
-        let record = match next {
-            Ok(n) => {
-                example_counter += 1;
-                if example_counter >= end {
-                    break;
-                }
-                n
-            }
-            Err(e) => panic!(
-                "Could not parse the record at counter={}: {}",
-                example_counter,
-                e.to_string()
-            ),
-        };
-        let mut focus = WordVector {
-            weights: model
-                .focus_vectors
-                .subview_mut(Axis(0), record.row as usize)
-                .into_owned(),
-            bias: model.focus_bias.view_mut()[record.row as usize],
-            weights_gradsq: model
-                .grad_focus_vectors
-                .subview_mut(Axis(0), record.row as usize)
-                .into_owned(),
-            bias_gradsq: model.grad_focus_bias.view_mut()[record.row as usize],
-        };
-        let mut context = WordVector {
-            weights: model
-                .context_vector
-                .subview_mut(Axis(0), record.col as usize)
-                .into_owned(),
-            bias: model.context_bias.view_mut()[record.col as usize],
-            weights_gradsq: model
-                .grad_context_vector
-                .subview_mut(Axis(0), record.col as usize)
-                .into_owned(),
-            bias_gradsq: model.grad_context_bias.view_mut()[record.col as usize],
-        };
-        if let Some(c) = sgd_step(&mut focus, &mut context, record.val, sgd_params.clone()) {
-            cost += c;
-        } else {
-            info!("Caught NaN in diff or fdiff for thread. Skipping update");
-        }
-    }
-    model.weights_to_file("weights_1.mpk").unwrap();
-    model.gradients_to_file("grads_1.mpk").unwrap();
-    cost
-}
-
-// fn train_loop(params: Params) -> i32 {
-//     info!("TRAINING MODEL");
-//     info!("Initializing parameters...");
-//     let mut w: Vec<f64> = vec![];
-//     let mut gradsq: Vec<f64> = vec![];
-//     initialize_parameters(&mut w, &mut gradsq, params.vector_size, params.vocab_size);
-//     info!("done.");
-//     info!("vector size: {}", params.vector_size);
-//     info!("vocab size: {}", params.vocab_size);
-//     info!("x_max: {}", params.sgd.x_max);
-//     info!("alpha: {}", params.sgd.alpha);
-//     let input_file = params.input_file.to_string();
-//     for i in 0..params.n_iter {
-//         {
-//             let w_slice = UnsafeSlice::new(&mut w);
-//             let gradsq_slice = UnsafeSlice::new(&mut gradsq);
-//             crossbeam::scope(|scope| {
-//                 let threads: Vec<_> = (0..params.n_threads)
-//                     .map(|j| {
-//                         let start = params.n_lines / params.n_threads * j;
-//                         let end = if j != params.n_threads - 1 {
-//                             params.n_lines / params.n_threads * (j + 1)
-//                         } else {
-//                             params.n_lines
-//                         };
-//                         let input_file = &input_file;
-//                         scope.spawn(move || {
-//                             glove_thread(
-//                                 w_slice,
-//                                 gradsq_slice,
-//                                 params.sgd,
-//                                 input_file.to_string(),
-//                                 params.vocab_size,
-//                                 start,
-//                                 end,
-//                             )
-//                         })
-//                     })
-//                     .collect();
-//                 let total_cost = threads.into_iter().map(|e| e.join()).fold(0f64, |a, b| a + b);
-//                 info!(
-//                     "{}, iter: {:>03}, cost: {}",
-//                     time::strftime("%x - %I:%M.%S%p", &time::now()).unwrap(),
-//                     i + 1,
-//                     total_cost / params.n_lines as f64
-//                 );
-//             });
-//         }
-//         if params.checkpoint_every > 0 && (i + 1) % params.checkpoint_every == 0 {
-//             info!("    saving intermediate parameters for iter {:>03}...", i + 1);
-//             if params.binary > 0 {
-//                 save_params_bin(&w, params.save_file, i + 1);
-//                 if params.save_gradsq {
-//                     save_gsq_bin(&gradsq, params.gradsq_file, i + 1);
-//                 }
-//             }
-//             if params.binary != 1 {
-//                 save_params_txt(
-//                     &w,
-//                     params.save_file,
-//                     params.vocab_file,
-//                     params.vector_size,
-//                     params.vocab_size,
-//                     i + 1,
-//                     params.model,
-//                 );
-//                 if params.save_gradsq {
-//                     save_gsq_txt(
-//                         &gradsq,
-//                         params.gradsq_file,
-//                         params.vocab_file,
-//                         params.vector_size,
-//                         params.vocab_size,
-//                         i + 1,
-//                     );
-//                 }
-//             }
-//         }
-//     }
-//     let mut retval = 0i32;
-//     if params.binary > 0 {
-//         retval |= save_params_bin(&w, params.save_file, 0);
-//         if params.save_gradsq {
-//             retval |= save_gsq_bin(&gradsq, params.gradsq_file, 0);
-//         }
-//     }
-//     if params.binary != 1 {
-//         retval |= save_params_txt(
-//             &w,
-//             params.save_file,
-//             params.vocab_file,
-//             params.vector_size,
-//             params.vocab_size,
-//             0,
-//             params.model,
-//         );
-//         if params.save_gradsq {
-//             retval |= save_gsq_txt(
-//                 &gradsq,
-//                 params.gradsq_file,
-//                 params.vocab_file,
-//                 params.vector_size,
-//                 params.vocab_size,
-//                 00000000,
-//             );
-//         }
-//     }
-//     retval
-// }
 
 fn parse_args() -> Params {
     let args: Vec<String> = env::args().collect();
@@ -291,7 +122,7 @@ fn parse_args() -> Params {
         sgd: SGDParams {
             alpha: 0.75,
             x_max: 100.0,
-            eta: 0.05,
+            learning_rate: 0.05,
             grad_clip_value: 100.0,
         },
         n_iter: 25,
@@ -309,52 +140,91 @@ fn parse_args() -> Params {
     opts.optopt(
         "",
         "vector-size",
-        "Dimension of word vector representations (excluding bias term); default 50",
+        &format!(
+            "Dimension of word vector representations (excluding bias term); default {}",
+            params.vector_size
+        ),
         "<int>",
     );
-    opts.optopt("", "threads", "Number of threads; default 8", "<int>");
-    opts.optopt("", "iter", "Number of training iterations; default 25", "<int>");
-    opts.optopt("", "eta", "Initial leaning rate; default 0.05", "<float>");
+    opts.optopt(
+        "",
+        "threads",
+        &format!("Number of threads; default {}", params.n_threads),
+        "<int>",
+    );
+    opts.optopt(
+        "",
+        "iter",
+        &format!("Number of training iterations; default {}", params.n_iter),
+        "<int>",
+    );
+    opts.optopt(
+        "",
+        "eta",
+        &format!("Initial leaning rate; default {}", params.sgd.learning_rate),
+        "<float>",
+    );
     opts.optopt(
         "",
         "alpha",
-        "Parameter in exponent of weighting function; default 0.75",
+        &format!(
+            "Parameter in exponent of weighting function; default {}",
+            params.sgd.alpha
+        ),
         "<float>",
     );
     opts.optopt(
         "",
         "x-max",
-        "Parameter specifying cutoff in weighting function; default 100.0",
+        &format!(
+            "Parameter specifying cutoff in weighting function; default {}",
+            params.sgd.x_max
+        ),
         "<float>",
     );
     opts.optopt(
         "",
         "binary",
-        "Save output in binary format (0: text, 1: binary, 2: both); default 0",
+        &format!(
+            "Save output in binary format (0: text, 1: binary, 2: both); default {}",
+            params.binary
+        ),
         "<int>",
     );
     opts.optopt(
         "",
         "input-file",
-        "Binary input file of shuffled cooccurrence data (produced by 'cooccur' and 'shuffle'); default cooccurrence.shuf.bin",
+        &format!(
+            "Binary input file of shuffled cooccurrence data (produced by 'cooccur' and 'shuffle'); default {}",
+            params.input_file
+        ),
         "<file>",
     );
     opts.optopt(
         "",
         "vocab-file",
-        "File containing vocabulary (truncated unigram counts, produced by 'vocab_count'); default vocab.txt",
+        &format!(
+            "File containing vocabulary (truncated unigram counts, produced by 'vocab_count'); default {}",
+            params.vocab_file
+        ),
         "<file>",
     );
     opts.optopt(
         "",
         "save-file",
-        "Filename, excluding extension, for word vector output; default vectors",
+        &format!(
+            "Filename, excluding extension, for word vector output; default {}",
+            params.save_file
+        ),
         "<file>",
     );
     opts.optopt(
         "",
         "gradsq-file",
-        "Filename, excluding extension, for squared gradient output; defaut gradsq",
+        &format!(
+            "Filename, excluding extension, for squared gradient output; defaut {}",
+            params.gradsq_file
+        ),
         "<file>",
     );
     opts.optopt(
@@ -366,22 +236,30 @@ fn parse_args() -> Params {
     opts.optopt(
         "",
         "checkpoint-every",
-        "Checkpoint a model every <int> iterations; default 0 (off)",
+        "Checkpoint a model every <int> iterations; default 0",
         "<int>",
     );
     opts.optopt(
         "",
         "gradsq-file",
-        "Filename, excluding extension, for squared gradient output; defaut gradsq",
+        &format!(
+            "Filename, excluding extension, for squared gradient output; defaut {}",
+            params.gradsq_file
+        ),
         "<file>",
     );
     opts.optopt(
         "",
         "model",
-        "Model for word vector output (for text output only); default 2
-        0: output all data, for both word and context word vectors, including bias terms
-        1: output word vectors, excluding bias terms
-        2: output word vectors + context word vectors, excluding bias terms",
+        &format!(
+            "Model for word vector output (for text output only); default 2
+        0: {}
+        1: {}
+        2: {}",
+            WordVectorOutput::BothVectorsSeparatelyWithBiasTerms,
+            WordVectorOutput::BothVectorsSeparatelyNoBiasTerms,
+            WordVectorOutput::BothVectorsSeparatelyWithBiasTerms,
+        ),
         "<int>",
     );
 
@@ -406,7 +284,7 @@ fn parse_args() -> Params {
             Ok(m) => m,
             Err(f) => panic!(f.to_string()),
         };
-        params.sgd.eta = match matches.opt_get_default("eta", params.sgd.eta) {
+        params.sgd.learning_rate = match matches.opt_get_default("eta", params.sgd.learning_rate) {
             Ok(m) => m,
             Err(f) => panic!(f.to_string()),
         };
@@ -463,84 +341,4 @@ fn parse_args() -> Params {
         };
     }
     params
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use grove::sparse::SparseRecord;
-    use ndarray::Array;
-    use std::io::{BufWriter, Write};
-
-    #[test]
-    fn test_sgd_with_non_zero_loss() {
-        let sgd_params = SGDParams {
-            alpha: 1f32,
-            x_max: 20f32,
-            eta: 1f32,
-            grad_clip_value: 1000f32,
-        };
-        let mut focus = WordVector {
-            weights: Array::ones(2),
-            bias: 1f32,
-            weights_gradsq: Array::ones(2),
-            bias_gradsq: 1f32,
-        };
-        let mut context = WordVector {
-            weights: Array::ones(2),
-            bias: 1f32,
-            weights_gradsq: Array::ones(2),
-            bias_gradsq: 1f32,
-        };
-
-        let d = focus.weights.dot(&context.weights) + 2f32 - (20f32).ln();
-        assert!((d - 1.0).abs() < 1e-2);
-
-        let upd = context.weights.map(|v| d * v);
-        print!("{}", upd);
-        // let mut focus = focus_ref.clone();
-        // let mut context = context_ref.clone();
-        let n = sgd_step(&mut focus, &mut context, 20.0, sgd_params);
-
-        if let Some(x) = n {
-            print!("{}", x);
-            assert!((x - 0.500).abs() < 1e-2);
-            assert_ne!(focus.weights, Array::ones(2));
-            assert_ne!(focus.weights_gradsq, Array::ones(2));
-            assert_ne!(context.weights, Array::ones(2));
-            assert_ne!(focus.weights_gradsq, Array::ones(2));
-        } else {
-            assert!(n.is_some());
-        }
-    }
-
-    #[test]
-    fn test_glove_thread() {
-        let n = 5usize;
-        let model = Model::with_random_weights(n, 2);
-        let params = SGDParams {
-            alpha: 1.0,
-            eta: 1.0,
-            grad_clip_value: 100.0,
-            x_max: 1.0,
-        };
-        let filename = "/tmp/tmp_file.test";
-        {
-            let mut writer = BufWriter::new(fs::File::create(filename.to_string()).unwrap());
-            for row in 0..n {
-                for col in 0..n {
-                    let rec = SparseRecord {
-                        row,
-                        col,
-                        val: 1f32 / (row * col + 1) as f32,
-                    };
-                    writer.write_all(&bincode::serialize(&rec).unwrap()).unwrap();
-                }
-            }
-        }
-        let x = glove_thread(model, params, filename.to_string(), 0, n * n);
-        println!("{}", x);
-        assert!(x - 0.56 < std::f32::EPSILON);
-        assert_eq!(0, 1);
-    }
 }
