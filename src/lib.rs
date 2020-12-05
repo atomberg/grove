@@ -3,6 +3,7 @@ extern crate num;
 use num::Float;
 
 pub mod glove_model;
+pub mod glove_train;
 pub mod record_io;
 pub mod sparse;
 pub mod word_vectors;
