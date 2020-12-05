@@ -1,7 +1,7 @@
 use hogwild::{HogwildArray1, HogwildArray2};
 use ndarray::{Array1, Array2};
 use rand::{distributions::Uniform, Rng};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{BufReader, BufWriter, Write};
 
